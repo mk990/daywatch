@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,6 +16,20 @@ import (
 	"github.com/mk/daywatch/internal/store"
 	"github.com/mk/daywatch/internal/web"
 )
+
+// notifyingSink stores records and then signals the live-update hub.
+type notifyingSink struct {
+	store *store.Store
+	hub   *web.Hub
+}
+
+func (s *notifyingSink) InsertRecords(ctx context.Context, records []json.RawMessage) (int, error) {
+	n, err := s.store.InsertRecords(ctx, records)
+	if err == nil && n > 0 {
+		s.hub.Notify()
+	}
+	return n, err
+}
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -36,15 +51,17 @@ func main() {
 	defer st.Close()
 	log.Info("database ready")
 
-	ing := ingest.New(cfg.IngestAddr, cfg.TokenHash, cfg.ReadTimeout, st, log)
-	if err := ing.Listen(); err != nil {
-		log.Error("ingest listen failed", "error", err)
-		os.Exit(1)
-	}
-
 	panel, err := web.New(st, log)
 	if err != nil {
 		log.Error("web init failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Wrap the store so every successful ingest wakes live-reload clients.
+	sink := &notifyingSink{store: st, hub: panel.Hub()}
+	ing := ingest.New(cfg.IngestAddr, cfg.TokenHash, cfg.ReadTimeout, sink, log)
+	if err := ing.Listen(); err != nil {
+		log.Error("ingest listen failed", "error", err)
 		os.Exit(1)
 	}
 

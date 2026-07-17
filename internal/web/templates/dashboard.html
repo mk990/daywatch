@@ -13,17 +13,9 @@
 
 <div class="card">
   <h2>Requests — status &amp; latency <span class="hint">click a bar to inspect</span></h2>
-  <div class="chart-box"><canvas id="timeline"></canvas></div>
+  <div class="chart-box"><canvas data-chart="timeline"></canvas></div>
+  <script type="application/json" data-chart-for="timeline">{{.Chart}}</script>
 </div>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  renderStatusChart('timeline', {{.Chart}}, {
-    drillUrl: '/section/requests',
-    drillParams: 'range={{.Base.Range}}',
-    okLabel: '2xx/3xx', warnLabel: '4xx', errLabel: '5xx'
-  });
-});
-</script>
 
 <div class="grid-2">
   <div class="card">

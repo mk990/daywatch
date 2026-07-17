@@ -33,6 +33,10 @@ type Section struct {
 	// GroupLabelExpr is the SQL expression used to label group aggregates.
 	GroupLabelExpr string
 	GroupTitle     string
+	// Chart legend labels for the ok/warn/err status classes.
+	OKLabel   string
+	WarnLabel string
+	ErrLabel  string
 }
 
 type Column struct {
@@ -46,10 +50,14 @@ type Server struct {
 	tmpl     *template.Template
 	sections []Section
 	bySlug   map[string]*Section
+	hub      *Hub
 }
 
+// Hub returns the live-update hub; the ingest pipeline calls Notify on it.
+func (s *Server) Hub() *Hub { return s.hub }
+
 func New(st *store.Store, log *slog.Logger) (*Server, error) {
-	s := &Server{store: st, log: log, bySlug: map[string]*Section{}}
+	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub()}
 	s.sections = buildSections()
 	for i := range s.sections {
 		s.bySlug[s.sections[i].Slug] = &s.sections[i]
@@ -113,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /section/{slug}", s.handleSection)
 	mux.HandleFunc("GET /record/{id}", s.handleRecord)
 	mux.HandleFunc("GET /trace/{trace}", s.handleTrace)
+	mux.HandleFunc("GET /events", s.handleEvents)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -209,8 +218,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Routes":      routes,
 		"SlowQueries": slowQueries,
 		"Exceptions":  exceptions,
-		"Chart":       chartJSON(timeline, bm),
-		"Recent":      recent,
+		"Chart": chartJSON(timeline, bm, chartOpts{
+			DrillURL:    "/section/requests",
+			DrillParams: "range=" + base.Range,
+			OKLabel:     "2xx/3xx",
+			WarnLabel:   "4xx",
+			ErrLabel:    "5xx",
+		}),
+		"Recent": recent,
 	})
 }
 
@@ -309,7 +324,13 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		"FromParam":  q.Get("from"),
 		"ToParam":    q.Get("to"),
 		"ClearQS":    clearQS.Encode(),
-		"Chart":      chartJSON(timeline, bm),
+		"Chart": chartJSON(timeline, bm, chartOpts{
+			DrillURL:    "/section/" + sec.Slug,
+			DrillParams: clearQS.Encode(),
+			OKLabel:     sec.OKLabel,
+			WarnLabel:   sec.WarnLabel,
+			ErrLabel:    sec.ErrLabel,
+		}),
 	})
 }
 
@@ -362,10 +383,19 @@ func bucketMinutes(since time.Time) int {
 	}
 }
 
-// chartJSON serializes classified buckets for the interactive chart:
-// per-bucket status-class counts, avg duration, and the bucket's unix
-// window so clicks can drill into the exact time range.
-func chartJSON(buckets []store.ClassBucket, bucketMinutes int) template.JS {
+// chartOpts configures the client-side chart renderer.
+type chartOpts struct {
+	DrillURL    string `json:"drillUrl,omitempty"`
+	DrillParams string `json:"drillParams,omitempty"`
+	OKLabel     string `json:"okLabel,omitempty"`
+	WarnLabel   string `json:"warnLabel,omitempty"`
+	ErrLabel    string `json:"errLabel,omitempty"`
+}
+
+// chartJSON serializes classified buckets plus renderer options for the
+// interactive chart: per-bucket status-class counts, avg duration, and the
+// bucket's unix window so clicks can drill into the exact time range.
+func chartJSON(buckets []store.ClassBucket, bucketMinutes int, opts chartOpts) template.JS {
 	type pt struct {
 		T     string  `json:"t"`
 		From  int64   `json:"from"`
@@ -394,9 +424,9 @@ func chartJSON(buckets []store.ClassBucket, bucketMinutes int) template.JS {
 			D:     b.AvgMs,
 		}
 	}
-	b, err := json.Marshal(pts)
+	b, err := json.Marshal(map[string]any{"data": pts, "opts": opts})
 	if err != nil {
-		return "[]"
+		return `{"data":[],"opts":{}}`
 	}
 	return template.JS(b)
 }

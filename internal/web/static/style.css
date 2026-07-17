@@ -181,3 +181,30 @@ canvas { display: block; width: 100%; }
 }
 .window-chip a { color: var(--muted); font-size: 12.5px; text-decoration: none; }
 .window-chip a:hover { color: var(--err); }
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 12px;
+  margin-right: 10px;
+  color: var(--muted);
+  font: 600 11px/1.4 inherit;
+  letter-spacing: .06em;
+  cursor: pointer;
+}
+.live-pill.on { color: var(--ok); border-color: var(--ok); }
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}

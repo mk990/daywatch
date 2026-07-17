@@ -77,6 +77,7 @@ func buildSections() []Section {
 			Slug: "requests", Type: "request", Title: "Requests", Icon: "🌐", StatusLabel: "Status",
 			GroupLabelExpr: "concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))",
 			GroupTitle:     "Top routes",
+			OKLabel:        "2xx/3xx", WarnLabel: "4xx", ErrLabel: "5xx",
 			Columns: []Column{
 				{"Method", func(r store.Record) template.HTML { return field(r, "method") }},
 				{"Path", func(r store.Record) template.HTML {
@@ -109,6 +110,7 @@ func buildSections() []Section {
 			Slug: "exceptions", Type: "exception", Title: "Exceptions", Icon: "💥", StatusLabel: "Handled",
 			GroupLabelExpr: "concat(data->>'class', ': ', data->>'message')",
 			GroupTitle:     "Top exceptions",
+			OKLabel:        "Handled", ErrLabel: "Unhandled",
 			Columns: []Column{
 				{"Class", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["class"]), 50)) }},
 				{"Message", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["message"]), 90)) }},
@@ -120,6 +122,7 @@ func buildSections() []Section {
 		},
 		{
 			Slug: "logs", Type: "log", Title: "Logs", Icon: "📜", StatusLabel: "Level",
+			OKLabel: "Debug/Info", WarnLabel: "Notice/Warning", ErrLabel: "Error+",
 			Columns: []Column{
 				{"Level", statusBadge},
 				{"Message", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["message"]), 120)) }},
@@ -174,6 +177,7 @@ func buildSections() []Section {
 			Slug: "cache", Type: "cache-event", Title: "Cache", Icon: "🧊", StatusLabel: "Event",
 			GroupLabelExpr: "data->>'key'",
 			GroupTitle:     "Hot keys",
+			OKLabel:        "Hit", WarnLabel: "Miss",
 			Columns: []Column{
 				{"Event", statusBadge},
 				{"Key", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["key"]), 80)) }},

@@ -11,20 +11,9 @@
 
 <div class="card">
   <h2>{{.Section.Title}} over time <span class="hint">click a bar to inspect</span></h2>
-  <div class="chart-box"><canvas id="section-chart"></canvas></div>
+  <div class="chart-box"><canvas data-chart="section-chart"></canvas></div>
+  <script type="application/json" data-chart-for="section-chart">{{.Chart}}</script>
 </div>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  renderStatusChart('section-chart', {{.Chart}}, {
-    drillUrl: '/section/{{.Section.Slug}}',
-    drillParams: {{.ClearQS}}
-    {{- if eq .Section.Type "request"}}, okLabel: '2xx/3xx', warnLabel: '4xx', errLabel: '5xx'{{end}}
-    {{- if eq .Section.Type "exception"}}, okLabel: 'Handled', errLabel: 'Unhandled'{{end}}
-    {{- if eq .Section.Type "log"}}, okLabel: 'Debug/Info', warnLabel: 'Notice/Warning', errLabel: 'Error+'{{end}}
-    {{- if eq .Section.Type "cache-event"}}, okLabel: 'Hit', warnLabel: 'Miss'{{end}}
-  });
-});
-</script>
 
 {{if .Groups}}
 <div class="card">

@@ -1,12 +1,30 @@
 /* Daywatch interactive status chart (Chart.js).
  *
- * renderStatusChart(canvasId, data, opts)
- *   data: [{t, from, to, ok, warn, err, other, d}]  (d = avg duration in µs)
- *   opts.drillUrl: base URL that receives ?from=&to= when a bar is clicked
- *   opts.drillParams: extra query-string (already encoded) to preserve filters
+ * Charts are declared in markup so they can be (re)initialized after
+ * live-reload swaps:
+ *   <canvas data-chart="some-id"></canvas>
+ *   <script type="application/json" data-chart-for="some-id">{"data":[...],"opts":{...}}</script>
+ *
+ * data: [{t, from, to, ok, warn, err, other, d}]  (d = avg duration in µs)
+ * opts.drillUrl: base URL that receives ?from=&to= when a bar is clicked
+ * opts.drillParams: extra query-string (already encoded) to preserve filters
  */
-function renderStatusChart(canvasId, data, opts) {
-  const el = document.getElementById(canvasId);
+function initCharts(root) {
+  if (typeof Chart === 'undefined') return;
+  (root || document).querySelectorAll('script[data-chart-for]').forEach((tag) => {
+    const el = document.querySelector('canvas[data-chart="' + tag.dataset.chartFor + '"]');
+    if (!el) return;
+    let payload;
+    try { payload = JSON.parse(tag.textContent); } catch { return; }
+    const existing = Chart.getChart(el);
+    if (existing) existing.destroy();
+    renderStatusChart(el, payload.data || [], payload.opts || {});
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function () { initCharts(); });
+
+function renderStatusChart(el, data, opts) {
   if (!el || !data.length || typeof Chart === 'undefined') return;
 
   const css = getComputedStyle(document.documentElement);
