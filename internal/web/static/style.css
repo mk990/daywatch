@@ -473,6 +473,29 @@ td.row-actions .btn-sm .ico { width: 13px; height: 13px; vertical-align: -2px; }
 
 tr.row-current td { background: var(--bg3); }
 
+/* --- apps --- */
+.app-created {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(61, 187, 114, .1);
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.app-created .ico { color: var(--ok); }
+.token-cell { white-space: nowrap; }
+code.token {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  user-select: all;
+}
+.copy-btn { margin: 0 8px; }
+.hint-block { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+
 /* --- syntax highlighting tokens --- */
 .tok-k   { color: #c792ea; }               /* keywords */
 .tok-s   { color: #9ccc65; }               /* strings */

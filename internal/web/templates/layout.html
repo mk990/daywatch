@@ -17,6 +17,7 @@
   <a class="brand" href="/">{{icon "sun"}} Daywatch</a>
   <nav>
     <a href="/?range={{.Range}}{{.AppQS}}" class="{{if eq .ActiveSlug ""}}active{{end}}">{{icon "gauge"}} Dashboard</a>
+    <a href="/apps" class="{{if eq .ActiveSlug "apps"}}active{{end}}">{{icon "grid"}} Apps</a>
     <a href="/alerts?range={{.Range}}{{.AppQS}}" class="{{if eq .ActiveSlug "alerts"}}active{{end}}">{{icon "siren"}} Alerts</a>
     {{$base := .}}
     {{range .Sections}}

@@ -1,0 +1,83 @@
+{{template "header" .Base}}
+
+<h1>{{icon "grid"}} Apps</h1>
+
+{{if .Error}}<div class="login-error">{{.Error}}</div>{{end}}
+{{if .Created}}
+<div class="app-created">
+  {{icon "check"}} App <strong>{{.Created}}</strong> created. Copy its token below into that
+  app's <code>.env</code> as <code>NIGHTWATCH_TOKEN</code>, point
+  <code>NIGHTWATCH_INGEST_URI</code> at this server, and traffic will appear immediately —
+  no restart needed.
+</div>
+{{end}}
+
+<div class="card">
+  <h2>Register a new app</h2>
+  <form method="post" action="/apps" class="filters">
+    <input type="text" name="name" placeholder="app name (e.g. shop)" pattern="[A-Za-z0-9_-]{1,40}" required>
+    <button type="submit">Create app + token</button>
+  </form>
+  <p class="hint-block">A random ingest token is generated for each app. Daywatch identifies the
+  sender by token, scopes all views per app, and rejects unknown tokens once at least one app is registered.</p>
+</div>
+
+<div class="card">
+  <h2>Registered apps</h2>
+  {{if .Apps}}
+  <table>
+    <thead><tr><th>App</th><th>Ingest token</th><th>Records</th><th>Last seen</th><th>Created</th><th></th></tr></thead>
+    <tbody>
+    {{$created := .Created}}
+    {{range .Apps}}
+    <tr {{if eq .Name $created}}class="row-current"{{end}}>
+      <td><a href="/?app={{.Name}}"><strong>{{.Name}}</strong></a></td>
+      <td class="token-cell">
+        <code class="token mono" id="tok-{{.ID}}">{{.Token}}</code>
+        <button type="button" class="btn-sm copy-btn" data-copy="tok-{{.ID}}" title="Copy token">copy</button>
+        <span class="hint">hash {{.TokenHash}}</span>
+      </td>
+      <td>{{.Records}}</td>
+      <td>{{if .Records}}<span title="{{timefmt .LastSeen}}">{{ago .LastSeen}}</span>{{else}}<span class="hint">never</span>{{end}}</td>
+      <td title="{{timefmt .CreatedAt}}">{{ago .CreatedAt}}</td>
+      <td class="actions">
+        <form method="post" action="/apps/{{.ID}}/regenerate" onsubmit="return confirm('Rotate the token for {{.Name}}? The old token stops working immediately.')">
+          <button class="btn-sm" title="Generate a new token">{{icon "refresh"}} rotate</button>
+        </form>
+        <form method="post" action="/apps/{{.ID}}/delete" onsubmit="return confirm('Delete app {{.Name}}? Its token stops working; already-stored records are kept under All apps.')">
+          <button class="btn-sm danger">delete</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No apps registered — the ingest port currently accepts <strong>any</strong> token.
+  Create an app above to enable token validation and per-app views.</p>
+  {{end}}
+</div>
+
+<div class="card">
+  <h2>Laravel setup for an app</h2>
+  <pre class="payload">{{`NIGHTWATCH_TOKEN=<the app's token above>
+NIGHTWATCH_INGEST_URI=<this server>:2407`}}</pre>
+  <p class="hint-block">Install <code>composer require laravel/nightwatch</code> in the Laravel project,
+  set those two variables, and do <em>not</em> run <code>nightwatch:agent</code> — Daywatch replaces it.</p>
+</div>
+
+<script>
+document.addEventListener('click', function (e) {
+  const btn = e.target.closest('.copy-btn');
+  if (!btn) return;
+  const el = document.getElementById(btn.dataset.copy);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const old = btn.textContent;
+    btn.textContent = 'copied!';
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  });
+});
+</script>
+
+{{template "footer" .Base}}

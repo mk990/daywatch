@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"sort"
 	"strconv"
@@ -127,7 +128,7 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	qs := q
-	base.QueryString = qs.Encode()
+	base.QueryString = template.URL(qs.Encode())
 	clearQS := q
 	clearQS.Del("from")
 	clearQS.Del("to")
@@ -143,7 +144,7 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 		"Window":    window,
 		"FromParam": q.Get("from"),
 		"ToParam":   q.Get("to"),
-		"ClearQS":   clearQS.Encode(),
+		"ClearQS":   template.URL(clearQS.Encode()),
 		"Chart": chartJSON(timeline, bm, chartOpts{
 			DrillURL:    "/exceptions",
 			DrillParams: clearQS.Encode(),

@@ -52,18 +52,22 @@ func main() {
 	defer st.Close()
 	log.Info("database ready")
 
-	appNames := make([]string, 0, len(cfg.Apps))
-	appsByHash := make(map[string]string, len(cfg.Apps))
+	// Env-configured apps seed the database on first boot; after that the
+	// panel's Apps page is the source of truth.
 	for _, a := range cfg.Apps {
-		appNames = append(appNames, a.Name)
-		appsByHash[a.Hash] = a.Name
+		seeded, err := st.SeedApp(ctx, a.Name, a.Token, a.Hash)
+		if err != nil {
+			log.Warn("seeding app from env failed", "app", a.Name, "error", err)
+		} else if seeded {
+			log.Info("app seeded from env", "app", a.Name, "token_hash", a.Hash)
+		}
 	}
 
 	panel, err := web.New(st, log, web.AuthConfig{
 		Username: cfg.Username,
 		Password: cfg.Password,
 		Secret:   cfg.JWTSecret,
-	}, appNames)
+	})
 	if err != nil {
 		log.Error("web init failed", "error", err)
 		os.Exit(1)
@@ -74,18 +78,14 @@ func main() {
 
 	// Wrap the store so every successful ingest wakes live-reload clients.
 	sink := &notifyingSink{store: st, hub: panel.Hub()}
-	ing := ingest.New(cfg.IngestAddr, appsByHash, cfg.ReadTimeout, sink, log)
+	ing := ingest.New(cfg.IngestAddr, st, cfg.ReadTimeout, sink, log)
 	if err := ing.Listen(); err != nil {
 		log.Error("ingest listen failed", "error", err)
 		os.Exit(1)
 	}
 
-	if len(cfg.Apps) > 0 {
-		for _, a := range cfg.Apps {
-			log.Info("app registered", "app", a.Name, "token_hash", a.Hash)
-		}
-	} else {
-		log.Warn("no NIGHTWATCH_TOKEN or DW_APPS set: accepting any token")
+	if names, err := st.AppNames(ctx); err == nil && len(names) == 0 {
+		log.Warn("no apps registered: accepting any token (create apps in the panel or set DW_APPS)")
 	}
 	if cfg.Username != "" {
 		log.Info("panel authentication enabled", "username", cfg.Username)

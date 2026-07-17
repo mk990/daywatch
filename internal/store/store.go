@@ -97,6 +97,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.migrateExceptions(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateApps(ctx); err != nil {
+		return err
+	}
 	return s.migrateAlerts(ctx)
 }
 

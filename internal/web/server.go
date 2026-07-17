@@ -59,15 +59,14 @@ type Server struct {
 	bySlug      map[string]*Section
 	hub         *Hub
 	auth        AuthConfig
-	apps        []string // configured app names; empty disables the switcher
 	alertTester AlertTester
 }
 
 // Hub returns the live-update hub; the ingest pipeline calls Notify on it.
 func (s *Server) Hub() *Hub { return s.hub }
 
-func New(st *store.Store, log *slog.Logger, auth AuthConfig, apps []string) (*Server, error) {
-	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(), auth: auth, apps: apps}
+func New(st *store.Store, log *slog.Logger, auth AuthConfig) (*Server, error) {
+	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(), auth: auth}
 	s.sections = buildSections()
 	for i := range s.sections {
 		s.bySlug[s.sections[i].Slug] = &s.sections[i]
@@ -139,6 +138,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /login", s.handleLogin)
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("GET /logout", s.handleLogout)
+	mux.HandleFunc("GET /apps", s.handleApps)
+	mux.HandleFunc("POST /apps", s.handleAppCreate)
+	mux.HandleFunc("POST /apps/{id}/delete", s.handleAppDelete)
+	mux.HandleFunc("POST /apps/{id}/regenerate", s.handleAppRegenerate)
 	mux.HandleFunc("GET /alerts", s.handleAlerts)
 	mux.HandleFunc("POST /alerts", s.handleAlertCreate)
 	mux.HandleFunc("POST /alerts/{id}/toggle", s.handleAlertToggle)
@@ -161,15 +164,18 @@ type appLink struct {
 
 // baseData is embedded in every page render.
 type baseData struct {
-	Sections    []Section
-	ActiveSlug  string
-	Range       string
-	RangeLabel  string
-	QueryString string
+	Sections   []Section
+	ActiveSlug string
+	Range      string
+	RangeLabel string
+	// QueryString and AppQS are pre-encoded query fragments; template.URL
+	// stops html/template from re-escaping the & and = when they are
+	// spliced into href attributes.
+	QueryString template.URL
 	AuthEnabled bool
-	App         string    // selected app filter ("" = all)
-	AppQS       string    // "&app=x" fragment for building links
-	AppSwitch   []appLink // topbar switcher; empty hides it
+	App         string       // selected app filter ("" = all)
+	AppQS       template.URL // "&app=x" fragment for building links
+	AppSwitch   []appLink    // topbar switcher; empty hides it
 }
 
 func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
@@ -188,10 +194,15 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		rng, since, label = "24h", time.Now().Add(-24*time.Hour), "last 24 hours"
 	}
 
-	// The app filter only accepts configured app names.
+	// Registered apps come from the database so panel-created apps show
+	// up immediately; the app filter only accepts registered names.
+	apps, err := s.store.AppNames(r.Context())
+	if err != nil {
+		s.log.Error("listing apps failed", "error", err)
+	}
 	app := ""
 	if want := q.Get("app"); want != "" {
-		for _, name := range s.apps {
+		for _, name := range apps {
 			if name == want {
 				app = want
 				break
@@ -208,20 +219,20 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		App:         app,
 	}
 	if app != "" {
-		b.AppQS = "&app=" + url.QueryEscape(app)
+		b.AppQS = template.URL("&app=" + url.QueryEscape(app))
 		// Range-picker links append QueryString; keep the app by default.
 		// Handlers that set their own QueryString include the app param anyway.
-		b.QueryString = "app=" + url.QueryEscape(app)
+		b.QueryString = template.URL("app=" + url.QueryEscape(app))
 	}
-	if len(s.apps) > 1 {
-		b.AppSwitch = s.appSwitch(r, app)
+	if len(apps) > 1 {
+		b.AppSwitch = appSwitch(r, apps, app)
 	}
 	return b, since
 }
 
 // appSwitch builds "All | app1 | app2 …" links that preserve the current
 // page and query, swapping only the app parameter.
-func (s *Server) appSwitch(r *http.Request, current string) []appLink {
+func appSwitch(r *http.Request, apps []string, current string) []appLink {
 	linkTo := func(app string) string {
 		q := r.URL.Query()
 		q.Del("app")
@@ -239,7 +250,7 @@ func (s *Server) appSwitch(r *http.Request, current string) []appLink {
 		return u
 	}
 	links := []appLink{{Label: "All apps", URL: linkTo(""), Active: current == ""}}
-	for _, name := range s.apps {
+	for _, name := range apps {
 		links = append(links, appLink{Label: name, URL: linkTo(name), Active: current == name})
 	}
 	return links
@@ -305,7 +316,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Exceptions":  exceptions,
 		"Chart": chartJSON(timeline, bm, chartOpts{
 			DrillURL:    "/section/requests",
-			DrillParams: "range=" + base.Range + base.AppQS,
+			DrillParams: "range=" + base.Range + string(base.AppQS),
 			OKLabel:     "2xx/3xx",
 			WarnLabel:   "4xx",
 			ErrLabel:    "5xx",
@@ -418,7 +429,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 
 	qs := q
 	qs.Del("page")
-	base.QueryString = qs.Encode()
+	base.QueryString = template.URL(qs.Encode())
 
 	clearQS := q
 	clearQS.Del("page")
@@ -444,7 +455,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		"Window":     window,
 		"FromParam":  q.Get("from"),
 		"ToParam":    q.Get("to"),
-		"ClearQS":    clearQS.Encode(),
+		"ClearQS":    template.URL(clearQS.Encode()),
 		"Chart": chartJSON(timeline, bm, chartOpts{
 			DrillURL:    "/section/" + sec.Slug,
 			DrillParams: clearQS.Encode(),

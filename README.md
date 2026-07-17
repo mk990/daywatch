@@ -80,8 +80,32 @@ LOG_STACK=single,nightwatch
 
 > Tokens are never sent in plain text: the package transmits the first 7 hex chars of
 > `xxh128(NIGHTWATCH_TOKEN)`, and Daywatch validates against the same hash. If
-> `NIGHTWATCH_TOKEN` is unset on the Daywatch side, any token is accepted (fine for local
-> dev; don't do it in production).
+> neither `NIGHTWATCH_TOKEN` nor `DW_APPS` is set on the Daywatch side, any token is
+> accepted (fine for local dev; don't do it in production).
+
+## Multiple apps
+
+One Daywatch instance can monitor several Laravel apps, managed entirely from the
+panel's **Apps** page:
+
+1. Enter a name (e.g. `shop`) and click **Create app + token** — Daywatch generates a
+   random ingest token and stores the app in Postgres.
+2. Copy the token into that Laravel app's `.env` as `NIGHTWATCH_TOKEN`.
+3. Traffic appears immediately — token hashes are resolved against the database on every
+   frame, so **no restart is needed** for new apps, token rotations, or deletions.
+
+The Apps page shows per-app record counts and last-seen times, and offers **rotate**
+(generate a new token; the old one stops working at once) and **delete** (the token is
+revoked; already-stored records are kept under "All apps"). Once at least one app is
+registered, unknown tokens are rejected.
+
+An **app switcher** in the top bar (All apps | shop | blog | …) scopes every dashboard,
+chart, section, and exception view to the selected app, and alert rules can target one
+app or all of them.
+
+Env variables still work as a **first-boot seed**: `NIGHTWATCH_TOKEN` registers an app
+named `default`, and `DW_APPS=shop:token-a,blog:token-b` registers several. They are
+inserted only if the name is free — after that, the panel is the source of truth.
 
 ## Exception triage
 
@@ -96,6 +120,8 @@ occurrence counts, first/last seen, and **Open / Resolved / Ignored** tabs:
   group just stays out of the open tab).
 - Charts also plot **P95/P99** duration lines (dashed) next to the average, so latency
   tails are visible at a glance.
+- SQL queries, PHP stack-trace snippets, and JSON payloads are **syntax highlighted**
+  with a built-in highlighter (no external assets, works offline).
 
 ## Alerting
 
@@ -129,7 +155,8 @@ All settings are environment variables (see `.env.example` for the compose-level
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | — (required) | Postgres connection string |
-| `NIGHTWATCH_TOKEN` | empty | Shared secret; empty accepts any token |
+| `NIGHTWATCH_TOKEN` | empty | Seeds app `default` on first boot (apps are DB-managed via the panel) |
+| `DW_APPS` | empty | Seeds multiple apps on first boot: `name:token,name2:token2` |
 | `DAYWATCH_USERNAME` / `DAYWATCH_PASSWORD` | empty | Panel login; both empty disables auth |
 | `DW_JWT_SECRET` | derived | Explicit JWT signing secret |
 | `DW_BASE_URL` | empty | Public panel URL included in alert notifications |

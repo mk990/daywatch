@@ -75,10 +75,18 @@ func (m *memSink) InsertRecords(_ context.Context, r []json.RawMessage, app stri
 	return len(r), nil
 }
 
+// mapResolver backs the AppResolver interface with a static map for tests.
+type mapResolver map[string]string
+
+func (m mapResolver) ResolveApp(_ context.Context, hash string) (string, bool, bool, error) {
+	name, ok := m[hash]
+	return name, ok, len(m) > 0, nil
+}
+
 func TestServerEndToEnd(t *testing.T) {
 	sink := &memSink{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New("127.0.0.1:0", map[string]string{"c27c052": "shop", "beef123": "blog"}, 2*time.Second, sink, log)
+	srv := New("127.0.0.1:0", mapResolver{"c27c052": "shop", "beef123": "blog"}, 2*time.Second, sink, log)
 	if err := srv.Listen(); err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,14 @@ type Sink interface {
 	InsertRecords(ctx context.Context, records []json.RawMessage, app string) (int, error)
 }
 
+// AppResolver maps a token hash to a registered app on every frame, so
+// apps created in the panel start ingesting without a restart.
+// found=false with anyApps=false means no apps are registered (accept
+// anything); found=false with anyApps=true means the token is invalid.
+type AppResolver interface {
+	ResolveApp(ctx context.Context, tokenHash string) (name string, found, anyApps bool, err error)
+}
+
 // Server implements the Laravel Nightwatch agent wire protocol:
 //
 //	{length}:v1:{tokenHash}:{payload}
@@ -27,7 +35,7 @@ type Sink interface {
 // Every complete frame is acknowledged with "2:OK" and the connection closed.
 type Server struct {
 	addr        string
-	apps        map[string]string // token hash -> app name; empty accepts any token
+	resolver    AppResolver
 	readTimeout time.Duration
 	sink        Sink
 	log         *slog.Logger
@@ -40,8 +48,8 @@ const (
 	ack            = "2:OK"
 )
 
-func New(addr string, apps map[string]string, readTimeout time.Duration, sink Sink, log *slog.Logger) *Server {
-	return &Server{addr: addr, apps: apps, readTimeout: readTimeout, sink: sink, log: log}
+func New(addr string, resolver AppResolver, readTimeout time.Duration, sink Sink, log *slog.Logger) *Server {
+	return &Server{addr: addr, resolver: resolver, readTimeout: readTimeout, sink: sink, log: log}
 }
 
 func (s *Server) Listen() error {
@@ -81,17 +89,20 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	var app string
-	if len(s.apps) > 0 {
-		var known bool
-		app, known = s.apps[tokenHash]
-		if !known {
-			s.log.Warn("invalid token hash", "remote", conn.RemoteAddr().String(), "got", tokenHash)
-			// The official agent still ACKs before validating, so we do the same:
-			// the app treats a missing ACK as an agent failure and logs noise.
-			conn.Write([]byte(ack))
-			return
-		}
+	resolveCtx, cancelResolve := context.WithTimeout(ctx, 5*time.Second)
+	app, found, anyApps, err := s.resolver.ResolveApp(resolveCtx, tokenHash)
+	cancelResolve()
+	if err != nil {
+		s.log.Error("app resolution failed", "error", err)
+		conn.Write([]byte(ack))
+		return
+	}
+	if anyApps && !found {
+		s.log.Warn("invalid token hash", "remote", conn.RemoteAddr().String(), "got", tokenHash)
+		// The official agent still ACKs before validating, so we do the same:
+		// the app treats a missing ACK as an agent failure and logs noise.
+		conn.Write([]byte(ack))
+		return
 	}
 
 	// ACK as soon as the frame is complete, mirroring the official agent.
