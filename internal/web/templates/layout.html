@@ -13,14 +13,17 @@
 <body>
 <div class="app">
 <aside class="sidebar">
-  <a class="brand" href="/">🌞 Daywatch</a>
+  <a class="brand" href="/">{{icon "sun"}} Daywatch</a>
   <nav>
-    <a href="/?range={{.Range}}" class="{{if eq .ActiveSlug ""}}active{{end}}">📊 Dashboard</a>
+    <a href="/?range={{.Range}}" class="{{if eq .ActiveSlug ""}}active{{end}}">{{icon "gauge"}} Dashboard</a>
     {{$base := .}}
     {{range .Sections}}
-    <a href="/section/{{.Slug}}?range={{$base.Range}}" class="{{if eq $base.ActiveSlug .Slug}}active{{end}}">{{.Icon}} {{.Title}}</a>
+    <a href="/section/{{.Slug}}?range={{$base.Range}}" class="{{if eq $base.ActiveSlug .Slug}}active{{end}}">{{icon .Icon}} {{.Title}}</a>
     {{end}}
   </nav>
+  {{if .AuthEnabled}}
+  <a class="logout" href="/logout">{{icon "log-out"}} Sign out</a>
+  {{end}}
 </aside>
 <main class="content">
 <div class="topbar">

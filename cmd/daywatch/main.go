@@ -51,7 +51,11 @@ func main() {
 	defer st.Close()
 	log.Info("database ready")
 
-	panel, err := web.New(st, log)
+	panel, err := web.New(st, log, web.AuthConfig{
+		Username: cfg.Username,
+		Password: cfg.Password,
+		Secret:   cfg.JWTSecret,
+	})
 	if err != nil {
 		log.Error("web init failed", "error", err)
 		os.Exit(1)
@@ -69,6 +73,11 @@ func main() {
 		log.Info("token validation enabled", "token_hash", cfg.TokenHash)
 	} else {
 		log.Warn("NIGHTWATCH_TOKEN not set: accepting any token")
+	}
+	if cfg.Username != "" {
+		log.Info("panel authentication enabled", "username", cfg.Username)
+	} else {
+		log.Warn("DAYWATCH_USERNAME/DAYWATCH_PASSWORD not set: panel is unprotected")
 	}
 
 	g, gctx := errgroup.WithContext(ctx)

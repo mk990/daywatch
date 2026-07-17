@@ -42,7 +42,7 @@ to it directly. **You do not run `php artisan nightwatch:agent` at all.**
 ## Quick start (Docker)
 
 ```bash
-cp .env.example .env          # set NIGHTWATCH_TOKEN to any secret string
+cp .env.example .env          # set NIGHTWATCH_TOKEN, DAYWATCH_USERNAME, DAYWATCH_PASSWORD
 docker compose up -d --build
 ```
 
@@ -83,6 +83,15 @@ LOG_STACK=single,nightwatch
 > `NIGHTWATCH_TOKEN` is unset on the Daywatch side, any token is accepted (fine for local
 > dev; don't do it in production).
 
+## Panel authentication
+
+Set `DAYWATCH_USERNAME` and `DAYWATCH_PASSWORD` to put the panel behind a login. Sessions
+are JWTs (HS256) stored in an HttpOnly cookie, valid for 7 days. The signing secret is
+derived deterministically from the credentials so sessions survive restarts; set
+`DW_JWT_SECRET` to control it explicitly (rotating it logs everyone out). Leaving both
+credentials empty runs the panel without a login (a warning is logged). The TCP ingest
+port is unaffected — it authenticates via the Nightwatch token hash as always.
+
 ## Configuration
 
 All settings are environment variables (see `.env.example` for the compose-level ones):
@@ -91,6 +100,8 @@ All settings are environment variables (see `.env.example` for the compose-level
 |---|---|---|
 | `DATABASE_URL` | — (required) | Postgres connection string |
 | `NIGHTWATCH_TOKEN` | empty | Shared secret; empty accepts any token |
+| `DAYWATCH_USERNAME` / `DAYWATCH_PASSWORD` | empty | Panel login; both empty disables auth |
+| `DW_JWT_SECRET` | derived | Explicit JWT signing secret |
 | `DW_INGEST_ADDR` | `:2407` | TCP ingest bind address |
 | `DW_HTTP_ADDR` | `:8080` | Web panel bind address |
 | `DW_RETENTION_DAYS` | `14` | Prune records older than N days (0 = keep forever) |

@@ -18,8 +18,10 @@ type ListFilter struct {
 	Search  string // matched against data::text
 	Since   time.Time
 	Until   time.Time
-	Limit   int
-	Offset  int
+	// SortSlowest orders by duration descending instead of newest first.
+	SortSlowest bool
+	Limit       int
+	Offset      int
 }
 
 func (f ListFilter) where() (string, []any) {
@@ -64,8 +66,12 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 		f.Limit = 50
 	}
 	where, args := f.where()
+	orderBy := "ts DESC, id DESC"
+	if f.SortSlowest {
+		orderBy = "duration DESC, id DESC"
+	}
 	q := fmt.Sprintf(`SELECT id, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
-		FROM records %s ORDER BY ts DESC, id DESC LIMIT %d OFFSET %d`, where, f.Limit, f.Offset)
+		FROM records %s ORDER BY %s LIMIT %d OFFSET %d`, where, orderBy, f.Limit, f.Offset)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -186,14 +192,25 @@ type GroupStat struct {
 	LastSeen time.Time
 }
 
-func (s *Store) GroupStats(ctx context.Context, typ, labelExpr string, since time.Time, limit int) ([]GroupStat, error) {
+// GroupStats aggregates per group_hash. orderBy picks the ranking:
+// "count" (most frequent), "avg" or "max" (slowest), "total" (most time overall).
+func (s *Store) GroupStats(ctx context.Context, typ, labelExpr, orderBy string, since time.Time, limit int) ([]GroupStat, error) {
+	orderExpr := map[string]string{
+		"count": "count(*)",
+		"avg":   "avg(duration)",
+		"max":   "max(duration)",
+		"total": "sum(duration)",
+	}[orderBy]
+	if orderExpr == "" {
+		orderExpr = "count(*)"
+	}
 	q := fmt.Sprintf(`
 		SELECT group_hash, max(%s) AS label, count(*), avg(duration)::float8, max(duration), max(ts)
 		FROM records
 		WHERE type = $1 AND ts >= $2 AND group_hash <> ''
 		GROUP BY group_hash
-		ORDER BY count(*) DESC
-		LIMIT $3`, labelExpr)
+		ORDER BY %s DESC
+		LIMIT $3`, labelExpr, orderExpr)
 	rows, err := s.pool.Query(ctx, q, typ, since, limit)
 	if err != nil {
 		return nil, err

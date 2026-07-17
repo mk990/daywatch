@@ -1,6 +1,6 @@
 {{template "header" .Base}}
 
-<h1>{{.Section.Icon}} {{.Section.Title}} <span class="count">({{.Count}})</span></h1>
+<h1>{{icon .Section.Icon}} {{.Section.Title}} <span class="count">({{.Count}})</span></h1>
 
 {{if .Window}}
 <div class="window-chip">
@@ -15,23 +15,46 @@
   <script type="application/json" data-chart-for="section-chart">{{.Chart}}</script>
 </div>
 
-{{if .Groups}}
-<div class="card">
-  <h2>{{.Section.GroupTitle}}</h2>
-  <table>
-    <thead><tr><th>&nbsp;</th><th>Count</th><th>Avg</th><th>Max</th><th>Last seen</th></tr></thead>
-    <tbody>
-    {{range .Groups}}
-    <tr>
-      <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}">{{printf "%.110s" .Label}}</a></td>
-      <td>{{.Count}}</td>
-      <td>{{ms .AvgMs}}</td>
-      <td>{{ms .MaxMs}}</td>
-      <td>{{ago .LastSeen}}</td>
-    </tr>
-    {{end}}
-    </tbody>
-  </table>
+{{if or .Groups .SlowGroups}}
+<div class="grid-2">
+  {{if .Groups}}
+  <div class="card">
+    <h2>{{.Section.GroupTitle}}</h2>
+    <table>
+      <thead><tr><th>&nbsp;</th><th>Count</th><th>Avg</th><th>Max</th><th>Last seen</th></tr></thead>
+      <tbody>
+      {{range .Groups}}
+      <tr>
+        <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}">{{printf "%.90s" .Label}}</a></td>
+        <td>{{.Count}}</td>
+        <td>{{ms .AvgMs}}</td>
+        <td>{{ms .MaxMs}}</td>
+        <td>{{ago .LastSeen}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+  {{if .SlowGroups}}
+  <div class="card">
+    <h2>{{.Section.SlowTitle}}</h2>
+    <table>
+      <thead><tr><th>&nbsp;</th><th>Avg</th><th>Max</th><th>Count</th><th>Last seen</th></tr></thead>
+      <tbody>
+      {{range .SlowGroups}}
+      <tr>
+        <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}&sort=slowest">{{printf "%.90s" .Label}}</a></td>
+        <td><strong>{{ms .AvgMs}}</strong></td>
+        <td>{{ms .MaxMs}}</td>
+        <td>{{.Count}}</td>
+        <td>{{ago .LastSeen}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
 </div>
 {{end}}
 
@@ -42,8 +65,15 @@
     {{if .Window}}<input type="hidden" name="from" value="{{.FromParam}}"><input type="hidden" name="to" value="{{.ToParam}}">{{end}}
     <input type="search" name="search" placeholder="Search payload…" value="{{.Search}}">
     {{if .Section.StatusLabel}}<input type="text" name="status" placeholder="{{.Section.StatusLabel}}" value="{{.Status}}" class="short">{{end}}
+    {{if .Slowest}}<input type="hidden" name="sort" value="slowest">{{end}}
     <button type="submit">Filter</button>
     {{if or .Search .Status .GroupParam}}<a href="/section/{{.Section.Slug}}?range={{.Base.Range}}" class="clear">✕ clear</a>{{end}}
+    {{if .Section.HasDuration}}
+    <span class="sort-toggle">Sort:
+      <a href="?{{.ClearQS}}{{if .FromParam}}&from={{.FromParam}}&to={{.ToParam}}{{end}}" class="{{if not .Slowest}}active{{end}}">newest</a> |
+      <a href="?{{.ClearQS}}&sort=slowest{{if .FromParam}}&from={{.FromParam}}&to={{.ToParam}}{{end}}" class="{{if .Slowest}}active{{end}}">slowest</a>
+    </span>
+    {{end}}
   </form>
 
   {{if .Records}}

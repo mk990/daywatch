@@ -37,6 +37,10 @@ type Section struct {
 	OKLabel   string
 	WarnLabel string
 	ErrLabel  string
+	// SlowTitle enables a "slowest by avg duration" aggregate card.
+	SlowTitle string
+	// HasDuration enables the newest/slowest sort toggle on the list.
+	HasDuration bool
 }
 
 type Column struct {
@@ -51,13 +55,14 @@ type Server struct {
 	sections []Section
 	bySlug   map[string]*Section
 	hub      *Hub
+	auth     AuthConfig
 }
 
 // Hub returns the live-update hub; the ingest pipeline calls Notify on it.
 func (s *Server) Hub() *Hub { return s.hub }
 
-func New(st *store.Store, log *slog.Logger) (*Server, error) {
-	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub()}
+func New(st *store.Store, log *slog.Logger, auth AuthConfig) (*Server, error) {
+	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(), auth: auth}
 	s.sections = buildSections()
 	for i := range s.sections {
 		s.bySlug[s.sections[i].Slug] = &s.sections[i]
@@ -103,8 +108,9 @@ func New(st *store.Store, log *slog.Logger) (*Server, error) {
 			}
 			return string(b)
 		},
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
+		"add":  func(a, b int) int { return a + b },
+		"sub":  func(a, b int) int { return a - b },
+		"icon": icon,
 	}
 
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
@@ -122,12 +128,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /record/{id}", s.handleRecord)
 	mux.HandleFunc("GET /trace/{trace}", s.handleTrace)
 	mux.HandleFunc("GET /events", s.handleEvents)
+	mux.HandleFunc("GET /login", s.handleLogin)
+	mux.HandleFunc("POST /login", s.handleLogin)
+	mux.HandleFunc("GET /logout", s.handleLogout)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
-	return mux
+	return s.requireAuth(mux)
 }
 
 // baseData is embedded in every page render.
@@ -137,6 +146,7 @@ type baseData struct {
 	Range       string
 	RangeLabel  string
 	QueryString string
+	AuthEnabled bool
 }
 
 func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
@@ -154,10 +164,11 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		rng, since, label = "24h", time.Now().Add(-24*time.Hour), "last 24 hours"
 	}
 	return baseData{
-		Sections:   s.sections,
-		ActiveSlug: active,
-		Range:      rng,
-		RangeLabel: label,
+		Sections:    s.sections,
+		ActiveSlug:  active,
+		Range:       rng,
+		RangeLabel:  label,
+		AuthEnabled: s.auth.Enabled(),
 	}, since
 }
 
@@ -182,12 +193,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	slowQueries, err := s.store.GroupStats(ctx, "query", "data->>'sql'", since, 10)
+	slowQueries, err := s.store.GroupStats(ctx, "query", "data->>'sql'", "total", since, 10)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	exceptions, err := s.store.GroupStats(ctx, "exception", "concat(data->>'class', ': ', data->>'message')", since, 10)
+	exceptions, err := s.store.GroupStats(ctx, "exception", "concat(data->>'class', ': ', data->>'message')", "count", since, 10)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -256,16 +267,19 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sortSlowest := q.Get("sort") == "slowest"
+
 	filter := store.ListFilter{
-		Type:   sec.Type,
-		Since:  since,
-		Until:  until,
-		Status: q.Get("status"),
-		UserID: q.Get("user"),
-		Group:  q.Get("group"),
-		Search: q.Get("search"),
-		Limit:  perPage,
-		Offset: (page - 1) * perPage,
+		Type:        sec.Type,
+		Since:       since,
+		Until:       until,
+		Status:      q.Get("status"),
+		UserID:      q.Get("user"),
+		Group:       q.Get("group"),
+		Search:      q.Get("search"),
+		SortSlowest: sortSlowest,
+		Limit:       perPage,
+		Offset:      (page - 1) * perPage,
 	}
 
 	records, err := s.store.List(ctx, filter)
@@ -279,12 +293,19 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var groups []store.GroupStat
+	var groups, slowGroups []store.GroupStat
 	if sec.GroupLabelExpr != "" && page == 1 && q.Get("search") == "" && q.Get("group") == "" {
-		groups, err = s.store.GroupStats(ctx, sec.Type, sec.GroupLabelExpr, since, 10)
+		groups, err = s.store.GroupStats(ctx, sec.Type, sec.GroupLabelExpr, "count", since, 10)
 		if err != nil {
 			httpError(w, s.log, err)
 			return
+		}
+		if sec.SlowTitle != "" {
+			slowGroups, err = s.store.GroupStats(ctx, sec.Type, sec.GroupLabelExpr, "avg", since, 10)
+			if err != nil {
+				httpError(w, s.log, err)
+				return
+			}
 		}
 	}
 
@@ -306,6 +327,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 	clearQS.Del("page")
 	clearQS.Del("from")
 	clearQS.Del("to")
+	clearQS.Del("sort")
 
 	s.render(w, "section.html", map[string]any{
 		"Base":       base,
@@ -317,9 +339,11 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		"HasPrev":    page > 1,
 		"HasNext":    int64(page*perPage) < count,
 		"Groups":     groups,
+		"SlowGroups": slowGroups,
 		"Search":     q.Get("search"),
 		"Status":     q.Get("status"),
 		"GroupParam": q.Get("group"),
+		"Slowest":    sortSlowest,
 		"Window":     window,
 		"FromParam":  q.Get("from"),
 		"ToParam":    q.Get("to"),

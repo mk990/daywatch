@@ -8,6 +8,9 @@ services:
     environment:
       DATABASE_URL: postgres://daywatch:${POSTGRES_PASSWORD:-daywatch}@db:5432/daywatch?sslmode=disable
       NIGHTWATCH_TOKEN: ${NIGHTWATCH_TOKEN:-}
+      DAYWATCH_USERNAME: ${DAYWATCH_USERNAME:-}
+      DAYWATCH_PASSWORD: ${DAYWATCH_PASSWORD:-}
+      DW_JWT_SECRET: ${DW_JWT_SECRET:-}
       DW_RETENTION_DAYS: ${DW_RETENTION_DAYS:-14}
       TZ: ${TZ:-UTC}
     depends_on:

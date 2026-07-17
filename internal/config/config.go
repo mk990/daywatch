@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -26,6 +27,11 @@ type Config struct {
 	RetentionDays int
 	// ReadTimeout for ingest connections.
 	ReadTimeout time.Duration
+	// Username/Password protect the web panel. Both empty disables auth.
+	Username string
+	Password string
+	// JWTSecret signs session tokens. Derived from credentials when unset.
+	JWTSecret []byte
 }
 
 func FromEnv() (*Config, error) {
@@ -52,6 +58,19 @@ func FromEnv() (*Config, error) {
 
 	if cfg.Token != "" {
 		cfg.TokenHash = TokenHash(cfg.Token)
+	}
+
+	cfg.Username = os.Getenv("DAYWATCH_USERNAME")
+	cfg.Password = os.Getenv("DAYWATCH_PASSWORD")
+	if (cfg.Username == "") != (cfg.Password == "") {
+		return nil, fmt.Errorf("DAYWATCH_USERNAME and DAYWATCH_PASSWORD must be set together")
+	}
+	if secret := os.Getenv("DW_JWT_SECRET"); secret != "" {
+		cfg.JWTSecret = []byte(secret)
+	} else if cfg.Username != "" {
+		// Stable across restarts so sessions survive redeploys.
+		sum := sha256.Sum256([]byte("daywatch-jwt:" + cfg.Username + ":" + cfg.Password + ":" + cfg.Token))
+		cfg.JWTSecret = sum[:]
 	}
 
 	return cfg, nil

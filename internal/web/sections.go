@@ -74,10 +74,11 @@ func statusBadge(r store.Record) template.HTML {
 func buildSections() []Section {
 	return []Section{
 		{
-			Slug: "requests", Type: "request", Title: "Requests", Icon: "🌐", StatusLabel: "Status",
+			Slug: "requests", Type: "request", Title: "Requests", Icon: "globe", StatusLabel: "Status",
 			GroupLabelExpr: "concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))",
 			GroupTitle:     "Top routes",
 			OKLabel:        "2xx/3xx", WarnLabel: "4xx", ErrLabel: "5xx",
+			SlowTitle: "Slowest routes (avg)", HasDuration: true,
 			Columns: []Column{
 				{"Method", func(r store.Record) template.HTML { return field(r, "method") }},
 				{"Path", func(r store.Record) template.HTML {
@@ -94,9 +95,10 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "queries", Type: "query", Title: "Queries", Icon: "🗄️", StatusLabel: "",
+			Slug: "queries", Type: "query", Title: "Queries", Icon: "database", StatusLabel: "",
 			GroupLabelExpr: "data->>'sql'",
 			GroupTitle:     "Most frequent queries",
+			SlowTitle:      "Slowest queries (avg)", HasDuration: true,
 			Columns: []Column{
 				{"SQL", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["sql"]), 110)) }},
 				{"Duration", durationCell},
@@ -107,7 +109,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "exceptions", Type: "exception", Title: "Exceptions", Icon: "💥", StatusLabel: "Handled",
+			Slug: "exceptions", Type: "exception", Title: "Exceptions", Icon: "triangle-alert", StatusLabel: "Handled",
 			GroupLabelExpr: "concat(data->>'class', ': ', data->>'message')",
 			GroupTitle:     "Top exceptions",
 			OKLabel:        "Handled", ErrLabel: "Unhandled",
@@ -121,7 +123,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "logs", Type: "log", Title: "Logs", Icon: "📜", StatusLabel: "Level",
+			Slug: "logs", Type: "log", Title: "Logs", Icon: "file-text", StatusLabel: "Level",
 			OKLabel: "Debug/Info", WarnLabel: "Notice/Warning", ErrLabel: "Error+",
 			Columns: []Column{
 				{"Level", statusBadge},
@@ -129,7 +131,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "commands", Type: "command", Title: "Commands", Icon: "⌨️", StatusLabel: "Exit code",
+			Slug: "commands", Type: "command", Title: "Commands", Icon: "terminal", StatusLabel: "Exit code", HasDuration: true,
 			GroupLabelExpr: "data->>'name'",
 			GroupTitle:     "Top commands",
 			Columns: []Column{
@@ -141,7 +143,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "queued-jobs", Type: "queued-job", Title: "Queued Jobs", Icon: "📤", StatusLabel: "",
+			Slug: "queued-jobs", Type: "queued-job", Title: "Queued Jobs", Icon: "send", StatusLabel: "",
 			GroupLabelExpr: "data->>'name'",
 			GroupTitle:     "Most queued",
 			Columns: []Column{
@@ -151,7 +153,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "job-attempts", Type: "job-attempt", Title: "Job Attempts", Icon: "⚙️", StatusLabel: "Status",
+			Slug: "job-attempts", Type: "job-attempt", Title: "Job Attempts", Icon: "refresh", StatusLabel: "Status", HasDuration: true,
 			GroupLabelExpr: "data->>'name'",
 			GroupTitle:     "Top jobs",
 			Columns: []Column{
@@ -163,7 +165,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "scheduled-tasks", Type: "scheduled-task", Title: "Scheduled Tasks", Icon: "⏰", StatusLabel: "Status",
+			Slug: "scheduled-tasks", Type: "scheduled-task", Title: "Scheduled Tasks", Icon: "clock", StatusLabel: "Status", HasDuration: true,
 			GroupLabelExpr: "data->>'name'",
 			GroupTitle:     "Tasks",
 			Columns: []Column{
@@ -174,7 +176,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "cache", Type: "cache-event", Title: "Cache", Icon: "🧊", StatusLabel: "Event",
+			Slug: "cache", Type: "cache-event", Title: "Cache", Icon: "layers", StatusLabel: "Event", HasDuration: true,
 			GroupLabelExpr: "data->>'key'",
 			GroupTitle:     "Hot keys",
 			OKLabel:        "Hit", WarnLabel: "Miss",
@@ -186,9 +188,10 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "outgoing", Type: "outgoing-request", Title: "Outgoing HTTP", Icon: "📡", StatusLabel: "Status",
+			Slug: "outgoing", Type: "outgoing-request", Title: "Outgoing HTTP", Icon: "arrow-up-right", StatusLabel: "Status",
 			GroupLabelExpr: "concat(data->>'method', ' ', data->>'host')",
 			GroupTitle:     "Top hosts",
+			SlowTitle:      "Slowest hosts (avg)", HasDuration: true,
 			Columns: []Column{
 				{"Method", func(r store.Record) template.HTML { return field(r, "method") }},
 				{"URL", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["url"]), 90)) }},
@@ -197,7 +200,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "mail", Type: "mail", Title: "Mail", Icon: "✉️", StatusLabel: "Status",
+			Slug: "mail", Type: "mail", Title: "Mail", Icon: "mail", StatusLabel: "Status", HasDuration: true,
 			GroupLabelExpr: "data->>'class'",
 			GroupTitle:     "Top mailables",
 			Columns: []Column{
@@ -209,7 +212,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "notifications", Type: "notification", Title: "Notifications", Icon: "🔔", StatusLabel: "Status",
+			Slug: "notifications", Type: "notification", Title: "Notifications", Icon: "bell", StatusLabel: "Status", HasDuration: true,
 			GroupLabelExpr: "data->>'class'",
 			GroupTitle:     "Top notifications",
 			Columns: []Column{
@@ -220,7 +223,7 @@ func buildSections() []Section {
 			},
 		},
 		{
-			Slug: "users", Type: "user", Title: "Users", Icon: "👤", StatusLabel: "",
+			Slug: "users", Type: "user", Title: "Users", Icon: "users", StatusLabel: "",
 			Columns: []Column{
 				{"ID", func(r store.Record) template.HTML { return field(r, "id") }},
 				{"Name", func(r store.Record) template.HTML { return field(r, "name") }},
