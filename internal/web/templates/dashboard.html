@@ -46,7 +46,7 @@
       <tbody>
       {{range .Exceptions}}
       <tr>
-        <td><a href="/section/exceptions?group={{.Group}}&range={{$.Base.Range}}" class="mono">{{printf "%.90s" .Label}}</a></td>
+        <td><a href="/exceptions/{{.Group}}" class="mono">{{printf "%.90s" .Label}}</a></td>
         <td>{{.Count}}</td>
         <td>{{ago .LastSeen}}</td>
       </tr>

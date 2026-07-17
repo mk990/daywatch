@@ -123,19 +123,23 @@ function renderStatusChart(el, data, opts) {
     datasets.push({ label: 'Other', data: data.map((p) => p.other), backgroundColor: C.other, stack: 's', order: 2 });
   }
   if (hasDuration) {
-    datasets.push({
-      label: 'Avg duration',
+    const durLine = (label, key, dash, alpha) => ({
+      label,
       type: 'line',
-      data: data.map((p) => p.d),
-      borderColor: C.accent,
-      backgroundColor: C.accent,
+      data: data.map((p) => p[key]),
+      borderColor: alpha ? C.accent + alpha : C.accent,
+      backgroundColor: alpha ? C.accent + alpha : C.accent,
       yAxisID: 'y2',
       tension: 0.35,
       pointRadius: 0,
       pointHoverRadius: 4,
-      borderWidth: 2,
+      borderWidth: dash ? 1.5 : 2,
+      borderDash: dash,
       order: 1,
     });
+    datasets.push(durLine('Avg duration', 'd'));
+    if (data.some((p) => p.p95 > 0)) datasets.push(durLine('P95', 'p95', [6, 4], 'b3'));
+    if (data.some((p) => p.p99 > 0)) datasets.push(durLine('P99', 'p99', [2, 4], '73'));
   }
 
   const chart = new Chart(el, {
@@ -179,7 +183,7 @@ function renderStatusChart(el, data, opts) {
             beginAtZero: true,
             grid: { drawOnChartArea: false },
             ticks: { color: C.accent, callback: (v) => fmtDur(v) },
-            title: { display: true, text: 'avg duration', color: C.accent },
+            title: { display: true, text: 'duration', color: C.accent },
           },
         }),
       },
@@ -196,7 +200,7 @@ function renderStatusChart(el, data, opts) {
           padding: 10,
           callbacks: {
             label: (item) => {
-              if (item.dataset.yAxisID === 'y2') return ' avg duration: ' + fmtDur(item.parsed.y);
+              if (item.dataset.yAxisID === 'y2') return ' ' + item.dataset.label.toLowerCase() + ': ' + fmtDur(item.parsed.y);
               return ' ' + item.dataset.label + ': ' + item.parsed.y;
             },
             footer: () => (opts.drillUrl ? 'Click to inspect these records' : ''),

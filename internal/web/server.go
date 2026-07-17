@@ -126,6 +126,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleDashboard)
 	mux.HandleFunc("GET /section/{slug}", s.handleSection)
+	mux.HandleFunc("GET /exceptions", s.handleExceptions)
+	mux.HandleFunc("GET /exceptions/{group}", s.handleExceptionDetail)
+	mux.HandleFunc("POST /exceptions/{group}/status", s.handleExceptionStatus)
 	mux.HandleFunc("GET /record/{id}", s.handleRecord)
 	mux.HandleFunc("GET /trace/{trace}", s.handleTrace)
 	mux.HandleFunc("GET /events", s.handleEvents)
@@ -250,6 +253,20 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 	sec, ok := s.bySlug[r.PathValue("slug")]
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	// Exceptions get a dedicated group-centric page.
+	if sec.Slug == "exceptions" {
+		dest := "/exceptions"
+		q := r.URL.Query()
+		if g := q.Get("group"); g != "" {
+			dest += "/" + g
+			q.Del("group")
+		}
+		if enc := q.Encode(); enc != "" {
+			dest += "?" + enc
+		}
+		http.Redirect(w, r, dest, http.StatusMovedPermanently)
 		return
 	}
 	base, since := s.base(r, sec.Slug)
@@ -448,6 +465,8 @@ func chartJSON(buckets []store.ClassBucket, bucketMinutes int, opts chartOpts) t
 		Err   int64   `json:"err"`
 		Other int64   `json:"other"`
 		D     float64 `json:"d"`
+		P95   float64 `json:"p95"`
+		P99   float64 `json:"p99"`
 	}
 	span := time.Duration(bucketMinutes) * time.Minute
 	layout := "15:04"
@@ -465,6 +484,8 @@ func chartJSON(buckets []store.ClassBucket, bucketMinutes int, opts chartOpts) t
 			Err:   b.Err,
 			Other: b.Other,
 			D:     b.AvgMs,
+			P95:   b.P95,
+			P99:   b.P99,
 		}
 	}
 	b, err := json.Marshal(map[string]any{"data": pts, "opts": opts})

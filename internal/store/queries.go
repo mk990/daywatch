@@ -244,6 +244,8 @@ type ClassBucket struct {
 	Err    int64
 	Other  int64
 	AvgMs  float64
+	P95    float64
+	P99    float64
 }
 
 // TimelineByClass returns a gap-free series of buckets from since until
@@ -261,7 +263,9 @@ func (s *Store) TimelineByClass(ctx context.Context, typ string, since, until ti
 		       count(*) FILTER (WHERE %[1]s = 'warn'),
 		       count(*) FILTER (WHERE %[1]s = 'err'),
 		       count(*) FILTER (WHERE %[1]s = 'other'),
-		       coalesce(avg(duration), 0)::float8
+		       coalesce(avg(duration), 0)::float8,
+		       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration), 0)::float8,
+		       coalesce(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration), 0)::float8
 		FROM records
 		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1)
 		GROUP BY bucket
@@ -275,7 +279,7 @@ func (s *Store) TimelineByClass(ctx context.Context, typ string, since, until ti
 	byBucket := map[int64]ClassBucket{}
 	for rows.Next() {
 		var cb ClassBucket
-		if err := rows.Scan(&cb.Bucket, &cb.OK, &cb.Warn, &cb.Err, &cb.Other, &cb.AvgMs); err != nil {
+		if err := rows.Scan(&cb.Bucket, &cb.OK, &cb.Warn, &cb.Err, &cb.Other, &cb.AvgMs, &cb.P95, &cb.P99); err != nil {
 			return nil, err
 		}
 		byBucket[cb.Bucket.Unix()] = cb

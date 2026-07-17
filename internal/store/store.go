@@ -90,6 +90,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, schema); err != nil {
 		return err
 	}
+	if err := s.migrateExceptions(ctx); err != nil {
+		return err
+	}
 	return s.migrateAlerts(ctx)
 }
 
@@ -98,6 +101,7 @@ func (s *Store) Close() { s.pool.Close() }
 // InsertRecords parses raw record objects and batch-inserts them.
 func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage) (int, error) {
 	rows := make([][]any, 0, len(raw))
+	var exceptionGroups []string
 	for _, r := range raw {
 		var m map[string]any
 		if err := json.Unmarshal(r, &m); err != nil {
@@ -108,6 +112,9 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage) (int, 
 		if rec.Type == "" {
 			s.log.Warn("skipping record without type")
 			continue
+		}
+		if rec.Type == "exception" && rec.Group != "" {
+			exceptionGroups = append(exceptionGroups, rec.Group)
 		}
 		rows = append(rows, []any{
 			rec.Type, rec.TS, rec.TraceID, rec.Group, rec.UserID,
@@ -123,6 +130,12 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage) (int, 
 		[]string{"type", "ts", "trace_id", "group_hash", "user_id", "deploy", "server", "stage", "duration", "status", "data"},
 		pgx.CopyFromRows(rows),
 	)
+	if err == nil {
+		// A recurring exception reopens its group if it had been resolved.
+		if rerr := s.reopenResolved(ctx, exceptionGroups); rerr != nil {
+			s.log.Warn("reopen resolved exceptions failed", "error", rerr)
+		}
+	}
 	return int(n), err
 }
 

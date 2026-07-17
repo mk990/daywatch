@@ -83,6 +83,20 @@ LOG_STACK=single,nightwatch
 > `NIGHTWATCH_TOKEN` is unset on the Daywatch side, any token is accepted (fine for local
 > dev; don't do it in production).
 
+## Exception triage
+
+The **Exceptions** page groups identical exceptions (by the package's `_group` hash) with
+occurrence counts, first/last seen, and **Open / Resolved / Ignored** tabs:
+
+- The detail view renders the full **stack trace** — application frames are highlighted
+  and show the captured source snippet with the failing line marked; vendor frames are
+  collapsed.
+- **Resolve** an exception when you've fixed it: if it ever happens again it automatically
+  reopens. **Ignore** silences a group permanently (new occurrences are still stored, the
+  group just stays out of the open tab).
+- Charts also plot **P95/P99** duration lines (dashed) next to the average, so latency
+  tails are visible at a glance.
+
 ## Alerting
 
 The **Alerts** page lets you create threshold rules evaluated every 30 seconds against

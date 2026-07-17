@@ -1,0 +1,85 @@
+{{template "header" .Base}}
+
+<p class="breadcrumb"><a href="/exceptions?range={{.Base.Range}}">← Exceptions</a></p>
+
+<h1 class="exc-title"><span class="mono">{{.G.Class}}</span> <span class="badge triage-{{.G.Status}}">{{.G.Status}}</span></h1>
+{{with .G.Message}}<p class="exc-message">{{.}}</p>{{end}}
+
+<div class="exc-toolbar">
+  <form method="post" action="/exceptions/{{.G.Group}}/status">
+    {{if ne .G.Status "resolved"}}<button class="btn" name="action" value="resolve">{{icon "check"}} Resolve</button>{{end}}
+    {{if ne .G.Status "ignored"}}<button class="btn" name="action" value="ignore">{{icon "x"}} Ignore</button>{{end}}
+    {{if ne .G.Status "open"}}<button class="btn" name="action" value="reopen">{{icon "refresh"}} Reopen</button>{{end}}
+  </form>
+  {{if ne .G.Status "open"}}<span class="hint">marked {{.G.Status}} {{ago .G.StatusAt}}{{if eq .G.Status "resolved"}} — reopens automatically if it happens again{{end}}</span>{{end}}
+</div>
+
+<div class="cards">
+  <div class="card stat"><span class="stat-num">{{.G.Count}}</span><span class="stat-label">occurrences</span></div>
+  <div class="card stat"><span class="stat-num {{if .G.Unhandled}}stat-err{{end}}">{{.G.Unhandled}}</span><span class="stat-label">unhandled</span></div>
+  <div class="card stat"><span class="stat-num" title="{{timefmt .G.FirstSeen}}">{{ago .G.FirstSeen}}</span><span class="stat-label">first seen</span></div>
+  <div class="card stat"><span class="stat-num" title="{{timefmt .G.LastSeen}}">{{ago .G.LastSeen}}</span><span class="stat-label">last seen</span></div>
+</div>
+
+<div class="card">
+  <table class="kv">
+    {{if .G.File}}<tr><th>Source</th><td class="mono">{{.G.File}}{{with .G.Line}}:{{.}}{{end}}</td></tr>{{end}}
+    {{with index .Record.Data "execution_preview"}}<tr><th>Happened in</th><td class="mono">{{.}}</td></tr>{{end}}
+    {{if .Record.TraceID}}<tr><th>Trace</th><td><a href="/trace/{{.Record.TraceID}}" class="mono">{{.Record.TraceID}}</a></td></tr>{{end}}
+    {{with index .Record.Data "php_version"}}<tr><th>PHP</th><td>{{.}}</td></tr>{{end}}
+    {{with index .Record.Data "laravel_version"}}<tr><th>Laravel</th><td>{{.}}</td></tr>{{end}}
+    {{if .Record.Server}}<tr><th>Server</th><td>{{.Record.Server}}</td></tr>{{end}}
+    <tr><th>Showing</th><td>occurrence <a href="/record/{{.Record.ID}}" class="mono">#{{.Record.ID}}</a> from {{timefmt .Record.TS}}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Stack trace <span class="hint">{{len .Frames}} frames · {{.AppFrames}} in app code</span></h2>
+  {{if .Frames}}
+  <ol class="trace">
+    {{range .Frames}}
+    <li class="frame {{if .App}}frame-app{{else}}frame-vendor{{end}}">
+      {{if .Code}}
+      <details {{if .App}}open{{end}}>
+        <summary>
+          <span class="frame-file mono">{{.File}}{{if .Line}}:{{.Line}}{{end}}</span>
+          {{with .Source}}<span class="frame-source mono">{{.}}</span>{{end}}
+        </summary>
+        <pre class="code-snippet">{{range .Code}}<span class="code-line{{if .Current}} code-current{{end}}"><span class="code-no">{{.No}}</span>{{.Text}}
+</span>{{end}}</pre>
+      </details>
+      {{else}}
+      <div class="frame-head">
+        <span class="frame-file mono">{{.File}}{{if .Line}}:{{.Line}}{{end}}</span>
+        {{with .Source}}<span class="frame-source mono">{{.}}</span>{{end}}
+      </div>
+      {{end}}
+    </li>
+    {{end}}
+  </ol>
+  {{else}}
+  <p class="empty">No stack trace captured for this occurrence.</p>
+  {{end}}
+</div>
+
+<div class="card">
+  <h2>Recent occurrences <span class="hint">latest 50</span></h2>
+  <table>
+    <thead><tr><th>When</th><th>Handled</th><th>Happened in</th><th>Trace</th><th></th><th></th></tr></thead>
+    <tbody>
+    {{$cur := .Record.ID}}
+    {{range .Occurrences}}
+    <tr {{if eq .ID $cur}}class="row-current"{{end}}>
+      <td title="{{timefmt .TS}}">{{ago .TS}}</td>
+      <td><span class="badge {{if eq .Status "unhandled"}}err{{else}}ok{{end}}">{{.Status}}</span></td>
+      <td class="mono small">{{with index .Data "execution_preview"}}{{printf "%.60s" .}}{{end}}</td>
+      <td>{{template "tracelink" .}}</td>
+      <td>{{template "recordlink" .}}</td>
+      <td>{{if ne .ID $cur}}<a class="small" href="?record={{.ID}}">view stack</a>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+
+{{template "footer" .Base}}

@@ -1,0 +1,82 @@
+{{template "header" .Base}}
+
+<h1>{{icon "triangle-alert"}} Exceptions</h1>
+
+{{if .Window}}
+<div class="window-chip">
+  🕐 Showing {{.Window}}
+  <a href="/exceptions?{{.ClearQS}}">✕ clear window</a>
+</div>
+{{end}}
+
+<div class="card">
+  <h2>Exceptions over time <span class="hint">click a bar to inspect · drag to zoom</span></h2>
+  <div class="chart-box"><canvas data-chart="section-chart"></canvas></div>
+  <script type="application/json" data-chart-for="section-chart">{{.Chart}}</script>
+</div>
+
+<div class="card">
+  <div class="tabs">
+    {{$d := .}}
+    {{range .Tabs}}
+    <a href="/exceptions?tab={{.}}&range={{$d.Base.Range}}{{with $d.Search}}&search={{.}}{{end}}{{if $d.Window}}&from={{$d.FromParam}}&to={{$d.ToParam}}{{end}}"
+       class="tab {{if eq $d.Tab .}}active{{end}}">
+      {{.}}
+      <span class="tab-count">{{if eq . "all"}}{{$d.AllCount}}{{else}}{{index $d.TabCounts .}}{{end}}</span>
+    </a>
+    {{end}}
+  </div>
+
+  <form method="get" class="filters">
+    <input type="hidden" name="tab" value="{{.Tab}}">
+    <input type="hidden" name="range" value="{{.Base.Range}}">
+    {{if .Window}}<input type="hidden" name="from" value="{{.FromParam}}"><input type="hidden" name="to" value="{{.ToParam}}">{{end}}
+    <input type="search" name="search" placeholder="Search class or message…" value="{{.Search}}">
+    <button type="submit">Filter</button>
+    {{if .Search}}<a href="/exceptions?tab={{.Tab}}&range={{.Base.Range}}" class="clear">✕ clear</a>{{end}}
+  </form>
+
+  {{if .Groups}}
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Exception</th><th>Count</th><th>First seen</th><th>Last seen</th><th></th></tr>
+    </thead>
+    <tbody>
+    {{$d := .}}
+    {{range .Groups}}
+    <tr class="{{if ne .Status "open"}}dim{{end}}">
+      <td><span class="badge triage-{{.Status}}">{{.Status}}</span></td>
+      <td>
+        <a href="/exceptions/{{.Group}}" class="exc-link">
+          <span class="exc-class mono">{{.Class}}</span>
+          <span class="exc-msg">{{printf "%.110s" .Message}}</span>
+          {{if .File}}<span class="exc-src mono small">{{.File}}{{with .Line}}:{{.}}{{end}}</span>{{end}}
+        </a>
+      </td>
+      <td>
+        {{.Count}}
+        {{if .Unhandled}}<span class="badge err" title="unhandled occurrences">{{.Unhandled}} unhandled</span>{{end}}
+      </td>
+      <td title="{{timefmt .FirstSeen}}">{{ago .FirstSeen}}</td>
+      <td title="{{timefmt .LastSeen}}">{{ago .LastSeen}}</td>
+      <td class="row-actions">
+        <form method="post" action="/exceptions/{{.Group}}/status">
+          <input type="hidden" name="back" value="/exceptions?{{$d.Base.QueryString}}">
+          {{if eq .Status "open"}}
+          <button class="btn-sm" name="action" value="resolve" title="Mark resolved">{{icon "check"}}</button>
+          <button class="btn-sm" name="action" value="ignore" title="Ignore">{{icon "x"}}</button>
+          {{else}}
+          <button class="btn-sm" name="action" value="reopen" title="Reopen">{{icon "refresh"}}</button>
+          {{end}}
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No {{if ne .Tab "all"}}{{.Tab}} {{end}}exceptions in this time range. 🎉</p>
+  {{end}}
+</div>
+
+{{template "footer" .Base}}
