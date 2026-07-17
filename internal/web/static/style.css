@@ -96,6 +96,24 @@ h1 .ico { width: 21px; height: 21px; color: var(--accent); }
 }
 .range-picker a.active { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 
+.app-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: 14px;
+}
+.app-picker .ico { color: var(--muted); margin-right: 4px; }
+.app-picker a {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.app-picker a.active { color: var(--bg); background: #7fb3e8; border-color: #7fb3e8; font-weight: 600; }
+
 h1 { font-size: 22px; margin-bottom: 16px; }
 h1 .count { color: var(--muted); font-size: 16px; font-weight: 400; }
 h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 10px; }
@@ -454,3 +472,13 @@ td.row-actions .btn-sm .ico { width: 13px; height: 13px; vertical-align: -2px; }
 .code-current .code-no { color: var(--err); font-weight: 700; }
 
 tr.row-current td { background: var(--bg3); }
+
+/* --- syntax highlighting tokens --- */
+.tok-k   { color: #c792ea; }               /* keywords */
+.tok-s   { color: #9ccc65; }               /* strings */
+.tok-n   { color: #f78c6c; }               /* numbers */
+.tok-c   { color: var(--muted); font-style: italic; } /* comments */
+.tok-v   { color: #82aaff; }               /* php variables */
+.tok-f   { color: #ffcb6b; }               /* class names */
+.tok-p   { color: #89ddff; font-weight: 600; } /* sql placeholders */
+.tok-key { color: #82aaff; }               /* json keys */

@@ -11,6 +11,14 @@
       <label>Name
         <input type="text" name="name" placeholder="Too many 5xx errors" required>
       </label>
+      {{if .Apps}}
+      <label>App
+        <select name="app">
+          <option value="">all apps</option>
+          {{range .Apps}}<option value="{{.}}" {{if eq . $.Base.App}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </label>
+      {{end}}
       <label>Record type
         <select name="record_type">
           <option value="">any</option>
@@ -63,6 +71,7 @@
       <td class="mono small">
         ≥{{.Threshold}} {{if .StatusClass}}{{.StatusClass}}{{else}}any{{end}}
         {{if .RecordType}}{{.RecordType}}{{else}}record{{end}}(s) / {{.WindowMinutes}}m
+        {{if .App}}<span class="pill">{{.App}}</span>{{end}}
         <span class="hint">cooldown {{.CooldownMinutes}}m</span>
       </td>
       <td class="mono small">{{.ChannelFormat}} → {{printf "%.48s" .ChannelURL}}</td>

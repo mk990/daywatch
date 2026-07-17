@@ -42,17 +42,17 @@ type ExceptionGroup struct {
 
 // ExceptionGroups lists exception groups seen in [since, until), newest
 // first. status filters by triage state ("" = all); search matches the
-// class or message of the latest occurrence. FirstSeen is global (not
-// clipped to the window) so triage age is accurate.
-func (s *Store) ExceptionGroups(ctx context.Context, since, until time.Time, status, search string, limit int) ([]ExceptionGroup, error) {
+// class or message of the latest occurrence; app scopes to one app.
+// FirstSeen is global (not clipped to the window) so triage age is accurate.
+func (s *Store) ExceptionGroups(ctx context.Context, app string, since, until time.Time, status, search string, limit int) ([]ExceptionGroup, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	end := "now()"
-	args := []any{since}
+	args := []any{since, app}
 	if !until.IsZero() {
 		args = append(args, until)
-		end = "$2"
+		end = "$3"
 	}
 	q := fmt.Sprintf(`
 		SELECT g.group_hash,
@@ -70,6 +70,7 @@ func (s *Store) ExceptionGroups(ctx context.Context, since, until time.Time, sta
 			       max(ts) AS last_seen, max(id) AS last_id
 			FROM records
 			WHERE type = 'exception' AND group_hash <> '' AND ts >= $1 AND ts < %s
+			  AND ($2 = '' OR app = $2)
 			GROUP BY group_hash
 		) g
 		JOIN records r ON r.id = g.last_id
@@ -77,6 +78,7 @@ func (s *Store) ExceptionGroups(ctx context.Context, since, until time.Time, sta
 		CROSS JOIN LATERAL (
 			SELECT min(ts) AS first_seen FROM records
 			WHERE type = 'exception' AND group_hash = g.group_hash
+			  AND ($2 = '' OR app = $2)
 		) fs`, end)
 
 	if status != "" {
@@ -112,18 +114,19 @@ func (s *Store) ExceptionGroups(ctx context.Context, since, until time.Time, sta
 
 // ExceptionStatusCounts tallies groups per triage state within the window,
 // for the Open/Resolved/Ignored tab badges.
-func (s *Store) ExceptionStatusCounts(ctx context.Context, since, until time.Time) (map[string]int64, error) {
+func (s *Store) ExceptionStatusCounts(ctx context.Context, app string, since, until time.Time) (map[string]int64, error) {
 	end := "now()"
-	args := []any{since}
+	args := []any{since, app}
 	if !until.IsZero() {
 		args = append(args, until)
-		end = "$2"
+		end = "$3"
 	}
 	q := fmt.Sprintf(`
 		SELECT coalesce(es.status, 'open'), count(*)
 		FROM (
 			SELECT DISTINCT group_hash FROM records
 			WHERE type = 'exception' AND group_hash <> '' AND ts >= $1 AND ts < %s
+			  AND ($2 = '' OR app = $2)
 		) g
 		LEFT JOIN exception_status es ON es.group_hash = g.group_hash
 		GROUP BY 1`, end)
@@ -144,8 +147,9 @@ func (s *Store) ExceptionStatusCounts(ctx context.Context, since, until time.Tim
 	return out, rows.Err()
 }
 
-// GetExceptionGroup returns one group's all-time (within retention) stats.
-func (s *Store) GetExceptionGroup(ctx context.Context, group string) (*ExceptionGroup, error) {
+// GetExceptionGroup returns one group's all-time (within retention) stats,
+// scoped to app when non-empty.
+func (s *Store) GetExceptionGroup(ctx context.Context, app, group string) (*ExceptionGroup, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT g.group_hash,
 		       coalesce(r.data->>'class', ''),
@@ -161,11 +165,11 @@ func (s *Store) GetExceptionGroup(ctx context.Context, group string) (*Exception
 			       count(*) FILTER (WHERE status = 'unhandled') AS unhandled,
 			       min(ts) AS first_seen, max(ts) AS last_seen, max(id) AS last_id
 			FROM records
-			WHERE type = 'exception' AND group_hash = $1
+			WHERE type = 'exception' AND group_hash = $1 AND ($2 = '' OR app = $2)
 			GROUP BY group_hash
 		) g
 		JOIN records r ON r.id = g.last_id
-		LEFT JOIN exception_status es ON es.group_hash = g.group_hash`, group)
+		LEFT JOIN exception_status es ON es.group_hash = g.group_hash`, group, app)
 	var g ExceptionGroup
 	if err := row.Scan(&g.Group, &g.Class, &g.Message, &g.File, &g.Line,
 		&g.Count, &g.Unhandled, &g.FirstSeen, &g.LastSeen, &g.Status, &g.StatusAt, &g.LastID); err != nil {

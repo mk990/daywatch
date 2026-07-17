@@ -41,6 +41,11 @@ func trunc(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// hlSpan wraps escaped text for the client-side syntax highlighter.
+func hlSpan(lang, s string) template.HTML {
+	return template.HTML(`<span data-hl="` + lang + `">` + template.HTMLEscapeString(s) + `</span>`)
+}
+
 func durationCell(r store.Record) template.HTML {
 	f := float64(r.Duration)
 	switch {
@@ -98,9 +103,10 @@ func buildSections() []Section {
 			Slug: "queries", Type: "query", Title: "Queries", Icon: "database", StatusLabel: "",
 			GroupLabelExpr: "data->>'sql'",
 			GroupTitle:     "Most frequent queries",
+			GroupLang:      "sql",
 			SlowTitle:      "Slowest queries (avg)", HasDuration: true,
 			Columns: []Column{
-				{"SQL", func(r store.Record) template.HTML { return esc(trunc(anyToString(r.Data["sql"]), 110)) }},
+				{"SQL", func(r store.Record) template.HTML { return hlSpan("sql", trunc(anyToString(r.Data["sql"]), 110)) }},
 				{"Duration", durationCell},
 				{"Connection", func(r store.Record) template.HTML { return field(r, "connection") }},
 				{"Source", func(r store.Record) template.HTML {

@@ -25,7 +25,7 @@
       <tbody>
       {{range .Groups}}
       <tr>
-        <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}">{{printf "%.90s" .Label}}</a></td>
+        <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}{{$.Base.AppQS}}"><span {{with $.Section.GroupLang}}data-hl="{{.}}"{{end}}>{{printf "%.90s" .Label}}</span></a></td>
         <td>{{.Count}}</td>
         <td>{{ms .AvgMs}}</td>
         <td>{{ms .MaxMs}}</td>
@@ -44,7 +44,7 @@
       <tbody>
       {{range .SlowGroups}}
       <tr>
-        <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}&sort=slowest">{{printf "%.90s" .Label}}</a></td>
+        <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}&sort=slowest{{$.Base.AppQS}}"><span {{with $.Section.GroupLang}}data-hl="{{.}}"{{end}}>{{printf "%.90s" .Label}}</span></a></td>
         <td><strong>{{ms .AvgMs}}</strong></td>
         <td>{{ms .MaxMs}}</td>
         <td>{{.Count}}</td>
@@ -61,13 +61,14 @@
 <div class="card">
   <form method="get" class="filters">
     <input type="hidden" name="range" value="{{.Base.Range}}">
+    {{if .Base.App}}<input type="hidden" name="app" value="{{.Base.App}}">{{end}}
     {{if .GroupParam}}<input type="hidden" name="group" value="{{.GroupParam}}">{{end}}
     {{if .Window}}<input type="hidden" name="from" value="{{.FromParam}}"><input type="hidden" name="to" value="{{.ToParam}}">{{end}}
     <input type="search" name="search" placeholder="Search payload…" value="{{.Search}}">
     {{if .Section.StatusLabel}}<input type="text" name="status" placeholder="{{.Section.StatusLabel}}" value="{{.Status}}" class="short">{{end}}
     {{if .Slowest}}<input type="hidden" name="sort" value="slowest">{{end}}
     <button type="submit">Filter</button>
-    {{if or .Search .Status .GroupParam}}<a href="/section/{{.Section.Slug}}?range={{.Base.Range}}" class="clear">✕ clear</a>{{end}}
+    {{if or .Search .Status .GroupParam}}<a href="/section/{{.Section.Slug}}?range={{.Base.Range}}{{.Base.AppQS}}" class="clear">✕ clear</a>{{end}}
     {{if .Section.HasDuration}}
     <span class="sort-toggle">Sort:
       <a href="?{{.ClearQS}}{{if .FromParam}}&from={{.FromParam}}&to={{.ToParam}}{{end}}" class="{{if not .Slowest}}active{{end}}">newest</a> |

@@ -132,6 +132,9 @@ func (e *Evaluator) message(r store.AlertRule, matched int64, test bool) string 
 	}
 	msg := fmt.Sprintf("🚨 Daywatch alert: %s — %d %s%s record(s) in the last %dm (threshold %d)",
 		r.Name, matched, class, what, r.WindowMinutes, r.Threshold)
+	if r.App != "" {
+		msg += " [app: " + r.App + "]"
+	}
 	if test {
 		msg = "[TEST] " + msg
 	}

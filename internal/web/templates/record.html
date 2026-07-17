@@ -5,6 +5,7 @@
 <div class="card">
   <table class="kv">
     <tr><th>Timestamp</th><td>{{timefmt .Record.TS}} ({{ago .Record.TS}})</td></tr>
+    {{if .Record.App}}<tr><th>App</th><td><span class="pill">{{.Record.App}}</span></td></tr>{{end}}
     {{if .Record.TraceID}}<tr><th>Trace</th><td><a href="/trace/{{.Record.TraceID}}" class="mono">{{.Record.TraceID}}</a></td></tr>{{end}}
     {{if .Record.UserID}}<tr><th>User</th><td>{{.Record.UserID}}</td></tr>{{end}}
     {{if .Record.Server}}<tr><th>Server</th><td>{{.Record.Server}}</td></tr>{{end}}
@@ -17,7 +18,7 @@
 
 <div class="card">
   <h2>Payload</h2>
-  <pre class="payload">{{json .Record.Data}}</pre>
+  <pre class="payload" data-hl="json">{{json .Record.Data}}</pre>
 </div>
 
 {{template "footer" .Base}}

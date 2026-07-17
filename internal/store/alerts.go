@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS alert_events (
 );
 CREATE INDEX IF NOT EXISTS alert_events_rule_idx ON alert_events (rule_id, fired_at DESC);
 CREATE INDEX IF NOT EXISTS alert_events_fired_idx ON alert_events (fired_at DESC);
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS app TEXT NOT NULL DEFAULT '';
 `
 
 // AlertRule fires a webhook when matching records exceed a threshold
@@ -40,6 +41,7 @@ type AlertRule struct {
 	ID              int64
 	Name            string
 	Enabled         bool
+	App             string // "" = any app
 	RecordType      string // "" = any type
 	StatusClass     string // "err", "warn", or "" = any record
 	Threshold       int
@@ -71,17 +73,17 @@ func (s *Store) migrateAlerts(ctx context.Context) error {
 func (s *Store) CreateAlertRule(ctx context.Context, r AlertRule) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO alert_rules
-			(name, enabled, record_type, status_class, threshold, window_minutes,
+			(name, enabled, app, record_type, status_class, threshold, window_minutes,
 			 cooldown_minutes, channel_url, channel_format, telegram_chat_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		r.Name, r.Enabled, r.RecordType, r.StatusClass, r.Threshold, r.WindowMinutes,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		r.Name, r.Enabled, r.App, r.RecordType, r.StatusClass, r.Threshold, r.WindowMinutes,
 		r.CooldownMinutes, r.ChannelURL, r.ChannelFormat, r.TelegramChatID)
 	return err
 }
 
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, enabled, record_type, status_class, threshold, window_minutes,
+		SELECT id, name, enabled, app, record_type, status_class, threshold, window_minutes,
 		       cooldown_minutes, channel_url, channel_format, telegram_chat_id, created_at
 		FROM alert_rules ORDER BY id`)
 	if err != nil {
@@ -91,7 +93,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	var out []AlertRule
 	for rows.Next() {
 		var r AlertRule
-		if err := rows.Scan(&r.ID, &r.Name, &r.Enabled, &r.RecordType, &r.StatusClass,
+		if err := rows.Scan(&r.ID, &r.Name, &r.Enabled, &r.App, &r.RecordType, &r.StatusClass,
 			&r.Threshold, &r.WindowMinutes, &r.CooldownMinutes, &r.ChannelURL,
 			&r.ChannelFormat, &r.TelegramChatID, &r.CreatedAt); err != nil {
 			return nil, err
@@ -104,10 +106,10 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 func (s *Store) GetAlertRule(ctx context.Context, id int64) (*AlertRule, error) {
 	var r AlertRule
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, enabled, record_type, status_class, threshold, window_minutes,
+		SELECT id, name, enabled, app, record_type, status_class, threshold, window_minutes,
 		       cooldown_minutes, channel_url, channel_format, telegram_chat_id, created_at
 		FROM alert_rules WHERE id = $1`, id).
-		Scan(&r.ID, &r.Name, &r.Enabled, &r.RecordType, &r.StatusClass,
+		Scan(&r.ID, &r.Name, &r.Enabled, &r.App, &r.RecordType, &r.StatusClass,
 			&r.Threshold, &r.WindowMinutes, &r.CooldownMinutes, &r.ChannelURL,
 			&r.ChannelFormat, &r.TelegramChatID, &r.CreatedAt)
 	if err != nil {
@@ -133,9 +135,10 @@ func (s *Store) CountMatching(ctx context.Context, r AlertRule, since time.Time)
 		SELECT count(*) FROM records
 		WHERE ts >= $1
 		  AND ($2 = '' OR type = $2)
-		  AND ($3 = '' OR %s = $3)`, statusClassSQL)
+		  AND ($3 = '' OR %s = $3)
+		  AND ($4 = '' OR app = $4)`, statusClassSQL)
 	var n int64
-	err := s.pool.QueryRow(ctx, q, since, r.RecordType, r.StatusClass).Scan(&n)
+	err := s.pool.QueryRow(ctx, q, since, r.RecordType, r.StatusClass, r.App).Scan(&n)
 	return n, err
 }
 

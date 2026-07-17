@@ -50,6 +50,7 @@
       window.scrollTo(0, scrollY);
       paint(); // the swapped topbar contains a new pill
       initCharts(current);
+      if (window.dwHighlight) dwHighlight(current);
       wirePill();
     } catch {
       // transient fetch failure; next event will retry

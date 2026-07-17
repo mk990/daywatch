@@ -6,10 +6,18 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zeebo/xxh3"
 )
+
+// App is one monitored application, identified on ingest by its token hash.
+type App struct {
+	Name  string
+	Token string
+	Hash  string
+}
 
 // Config holds all runtime settings, sourced from environment variables.
 type Config struct {
@@ -23,6 +31,9 @@ type Config struct {
 	Token string
 	// TokenHash is the first 7 hex chars of xxh128(Token), matching the PHP agent.
 	TokenHash string
+	// Apps maps additional per-app tokens (DW_APPS) plus the default token.
+	// Empty means no token validation: every sender lands in the "" app.
+	Apps []App
 	// RetentionDays: records older than this are pruned. 0 disables pruning.
 	RetentionDays int
 	// ReadTimeout for ingest connections.
@@ -62,6 +73,12 @@ func FromEnv() (*Config, error) {
 		cfg.TokenHash = TokenHash(cfg.Token)
 	}
 
+	apps, err := parseApps(os.Getenv("DW_APPS"), cfg.Token)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Apps = apps
+
 	cfg.BaseURL = os.Getenv("DW_BASE_URL")
 	cfg.Username = os.Getenv("DAYWATCH_USERNAME")
 	cfg.Password = os.Getenv("DAYWATCH_PASSWORD")
@@ -83,6 +100,48 @@ func FromEnv() (*Config, error) {
 func TokenHash(token string) string {
 	sum := xxh3.Hash128([]byte(token)).Bytes()
 	return hex.EncodeToString(sum[:])[:7]
+}
+
+// parseApps reads DW_APPS ("name:token,name2:token2"). NIGHTWATCH_TOKEN, when
+// set, is included as the app named "default" so single-app setups keep
+// working unchanged.
+func parseApps(spec, defaultToken string) ([]App, error) {
+	var apps []App
+	names := map[string]bool{}
+	hashes := map[string]string{}
+	add := func(name, token string) error {
+		if names[name] {
+			return fmt.Errorf("DW_APPS: duplicate app name %q", name)
+		}
+		h := TokenHash(token)
+		if other, ok := hashes[h]; ok {
+			return fmt.Errorf("DW_APPS: apps %q and %q share the same token", other, name)
+		}
+		names[name], hashes[h] = true, name
+		apps = append(apps, App{Name: name, Token: token, Hash: h})
+		return nil
+	}
+
+	for _, entry := range strings.Split(spec, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		name, token, ok := strings.Cut(entry, ":")
+		name, token = strings.TrimSpace(name), strings.TrimSpace(token)
+		if !ok || name == "" || token == "" {
+			return nil, fmt.Errorf("DW_APPS: invalid entry %q, want name:token", entry)
+		}
+		if err := add(name, token); err != nil {
+			return nil, err
+		}
+	}
+	if defaultToken != "" && hashes[TokenHash(defaultToken)] == "" {
+		if err := add("default", defaultToken); err != nil {
+			return nil, err
+		}
+	}
+	return apps, nil
 }
 
 func getenv(key, fallback string) string {

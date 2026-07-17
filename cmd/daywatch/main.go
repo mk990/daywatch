@@ -24,8 +24,8 @@ type notifyingSink struct {
 	hub   *web.Hub
 }
 
-func (s *notifyingSink) InsertRecords(ctx context.Context, records []json.RawMessage) (int, error) {
-	n, err := s.store.InsertRecords(ctx, records)
+func (s *notifyingSink) InsertRecords(ctx context.Context, records []json.RawMessage, app string) (int, error) {
+	n, err := s.store.InsertRecords(ctx, records, app)
 	if err == nil && n > 0 {
 		s.hub.Notify()
 	}
@@ -52,11 +52,18 @@ func main() {
 	defer st.Close()
 	log.Info("database ready")
 
+	appNames := make([]string, 0, len(cfg.Apps))
+	appsByHash := make(map[string]string, len(cfg.Apps))
+	for _, a := range cfg.Apps {
+		appNames = append(appNames, a.Name)
+		appsByHash[a.Hash] = a.Name
+	}
+
 	panel, err := web.New(st, log, web.AuthConfig{
 		Username: cfg.Username,
 		Password: cfg.Password,
 		Secret:   cfg.JWTSecret,
-	})
+	}, appNames)
 	if err != nil {
 		log.Error("web init failed", "error", err)
 		os.Exit(1)
@@ -67,16 +74,18 @@ func main() {
 
 	// Wrap the store so every successful ingest wakes live-reload clients.
 	sink := &notifyingSink{store: st, hub: panel.Hub()}
-	ing := ingest.New(cfg.IngestAddr, cfg.TokenHash, cfg.ReadTimeout, sink, log)
+	ing := ingest.New(cfg.IngestAddr, appsByHash, cfg.ReadTimeout, sink, log)
 	if err := ing.Listen(); err != nil {
 		log.Error("ingest listen failed", "error", err)
 		os.Exit(1)
 	}
 
-	if cfg.TokenHash != "" {
-		log.Info("token validation enabled", "token_hash", cfg.TokenHash)
+	if len(cfg.Apps) > 0 {
+		for _, a := range cfg.Apps {
+			log.Info("app registered", "app", a.Name, "token_hash", a.Hash)
+		}
 	} else {
-		log.Warn("NIGHTWATCH_TOKEN not set: accepting any token")
+		log.Warn("no NIGHTWATCH_TOKEN or DW_APPS set: accepting any token")
 	}
 	if cfg.Username != "" {
 		log.Info("panel authentication enabled", "username", cfg.Username)

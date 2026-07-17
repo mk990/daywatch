@@ -19,7 +19,7 @@
   <div class="tabs">
     {{$d := .}}
     {{range .Tabs}}
-    <a href="/exceptions?tab={{.}}&range={{$d.Base.Range}}{{with $d.Search}}&search={{.}}{{end}}{{if $d.Window}}&from={{$d.FromParam}}&to={{$d.ToParam}}{{end}}"
+    <a href="/exceptions?tab={{.}}&range={{$d.Base.Range}}{{$d.Base.AppQS}}{{with $d.Search}}&search={{.}}{{end}}{{if $d.Window}}&from={{$d.FromParam}}&to={{$d.ToParam}}{{end}}"
        class="tab {{if eq $d.Tab .}}active{{end}}">
       {{.}}
       <span class="tab-count">{{if eq . "all"}}{{$d.AllCount}}{{else}}{{index $d.TabCounts .}}{{end}}</span>
@@ -30,10 +30,11 @@
   <form method="get" class="filters">
     <input type="hidden" name="tab" value="{{.Tab}}">
     <input type="hidden" name="range" value="{{.Base.Range}}">
+    {{if .Base.App}}<input type="hidden" name="app" value="{{.Base.App}}">{{end}}
     {{if .Window}}<input type="hidden" name="from" value="{{.FromParam}}"><input type="hidden" name="to" value="{{.ToParam}}">{{end}}
     <input type="search" name="search" placeholder="Search class or message…" value="{{.Search}}">
     <button type="submit">Filter</button>
-    {{if .Search}}<a href="/exceptions?tab={{.Tab}}&range={{.Base.Range}}" class="clear">✕ clear</a>{{end}}
+    {{if .Search}}<a href="/exceptions?tab={{.Tab}}&range={{.Base.Range}}{{.Base.AppQS}}" class="clear">✕ clear</a>{{end}}
   </form>
 
   {{if .Groups}}
@@ -47,7 +48,7 @@
     <tr class="{{if ne .Status "open"}}dim{{end}}">
       <td><span class="badge triage-{{.Status}}">{{.Status}}</span></td>
       <td>
-        <a href="/exceptions/{{.Group}}" class="exc-link">
+        <a href="/exceptions/{{.Group}}?range={{$d.Base.Range}}{{$d.Base.AppQS}}" class="exc-link">
           <span class="exc-class mono">{{.Class}}</span>
           <span class="exc-msg">{{printf "%.110s" .Message}}</span>
           {{if .File}}<span class="exc-src mono small">{{.File}}{{with .Line}}:{{.}}{{end}}</span>{{end}}

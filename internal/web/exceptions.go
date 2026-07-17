@@ -104,12 +104,12 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	search := q.Get("search")
-	groups, err := s.store.ExceptionGroups(ctx, since, until, statusFilter, search, 50)
+	groups, err := s.store.ExceptionGroups(ctx, base.App, since, until, statusFilter, search, 50)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	tabCounts, err := s.store.ExceptionStatusCounts(ctx, since, until)
+	tabCounts, err := s.store.ExceptionStatusCounts(ctx, base.App, since, until)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -120,7 +120,7 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 		span = until.Sub(since)
 	}
 	bm := bucketMinutes(span)
-	timeline, err := s.store.TimelineByClass(ctx, "exception", since, until, bm)
+	timeline, err := s.store.TimelineByClass(ctx, base.App, "exception", since, until, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -158,8 +158,9 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 	group := r.PathValue("group")
 	ctx := r.Context()
+	base, _ := s.base(r, "exceptions")
 
-	g, err := s.store.GetExceptionGroup(ctx, group)
+	g, err := s.store.GetExceptionGroup(ctx, base.App, group)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -179,7 +180,7 @@ func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	occurrences, err := s.store.List(ctx, store.ListFilter{Type: "exception", Group: group, Limit: 50})
+	occurrences, err := s.store.List(ctx, store.ListFilter{App: base.App, Type: "exception", Group: group, Limit: 50})
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -193,7 +194,6 @@ func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	base, _ := s.base(r, "exceptions")
 	s.render(w, "exception.html", map[string]any{
 		"Base":        base,
 		"G":           g,

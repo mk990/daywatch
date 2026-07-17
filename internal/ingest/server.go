@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// Sink receives fully-parsed record batches.
+// Sink receives fully-parsed record batches tagged with the sending app.
 type Sink interface {
-	InsertRecords(ctx context.Context, records []json.RawMessage) (int, error)
+	InsertRecords(ctx context.Context, records []json.RawMessage, app string) (int, error)
 }
 
 // Server implements the Laravel Nightwatch agent wire protocol:
@@ -27,7 +27,7 @@ type Sink interface {
 // Every complete frame is acknowledged with "2:OK" and the connection closed.
 type Server struct {
 	addr        string
-	tokenHash   string // empty means accept any token
+	apps        map[string]string // token hash -> app name; empty accepts any token
 	readTimeout time.Duration
 	sink        Sink
 	log         *slog.Logger
@@ -40,8 +40,8 @@ const (
 	ack            = "2:OK"
 )
 
-func New(addr, tokenHash string, readTimeout time.Duration, sink Sink, log *slog.Logger) *Server {
-	return &Server{addr: addr, tokenHash: tokenHash, readTimeout: readTimeout, sink: sink, log: log}
+func New(addr string, apps map[string]string, readTimeout time.Duration, sink Sink, log *slog.Logger) *Server {
+	return &Server{addr: addr, apps: apps, readTimeout: readTimeout, sink: sink, log: log}
 }
 
 func (s *Server) Listen() error {
@@ -81,12 +81,17 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	if s.tokenHash != "" && tokenHash != s.tokenHash {
-		s.log.Warn("invalid token hash", "remote", conn.RemoteAddr().String(), "got", tokenHash)
-		// The official agent still ACKs before validating, so we do the same:
-		// the app treats a missing ACK as an agent failure and logs noise.
-		conn.Write([]byte(ack))
-		return
+	var app string
+	if len(s.apps) > 0 {
+		var known bool
+		app, known = s.apps[tokenHash]
+		if !known {
+			s.log.Warn("invalid token hash", "remote", conn.RemoteAddr().String(), "got", tokenHash)
+			// The official agent still ACKs before validating, so we do the same:
+			// the app treats a missing ACK as an agent failure and logs noise.
+			conn.Write([]byte(ack))
+			return
+		}
 	}
 
 	// ACK as soon as the frame is complete, mirroring the official agent.
@@ -110,12 +115,12 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 
 	insertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	n, err := s.sink.InsertRecords(insertCtx, records)
+	n, err := s.sink.InsertRecords(insertCtx, records, app)
 	if err != nil {
 		s.log.Error("insert failed", "error", err, "records", len(records))
 		return
 	}
-	s.log.Info("ingested", "records", n, "remote", conn.RemoteAddr().String())
+	s.log.Info("ingested", "records", n, "app", app, "remote", conn.RemoteAddr().String())
 }
 
 // readFrame parses one protocol frame from r.

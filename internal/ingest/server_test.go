@@ -64,17 +64,21 @@ func TestTokenHashMatchesPHP(t *testing.T) {
 	}
 }
 
-type memSink struct{ batches [][]json.RawMessage }
+type memSink struct {
+	batches [][]json.RawMessage
+	apps    []string
+}
 
-func (m *memSink) InsertRecords(_ context.Context, r []json.RawMessage) (int, error) {
+func (m *memSink) InsertRecords(_ context.Context, r []json.RawMessage, app string) (int, error) {
 	m.batches = append(m.batches, r)
+	m.apps = append(m.apps, app)
 	return len(r), nil
 }
 
 func TestServerEndToEnd(t *testing.T) {
 	sink := &memSink{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New("127.0.0.1:0", "c27c052", 2*time.Second, sink, log)
+	srv := New("127.0.0.1:0", map[string]string{"c27c052": "shop", "beef123": "blog"}, 2*time.Second, sink, log)
 	if err := srv.Listen(); err != nil {
 		t.Fatal(err)
 	}
@@ -118,11 +122,26 @@ func TestServerEndToEnd(t *testing.T) {
 	if !bytes.Contains(sink.batches[0][0], []byte(`"request"`)) {
 		t.Fatalf("first record = %s", sink.batches[0][0])
 	}
+	if sink.apps[0] != "shop" {
+		t.Fatalf("app = %q, want shop", sink.apps[0])
+	}
+
+	// A second app's token routes to its own app name.
+	if got := send(buildFrame("beef123", records)); got != "2:OK" {
+		t.Fatalf("blog ack = %q", got)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for len(sink.batches) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(sink.apps) != 2 || sink.apps[1] != "blog" {
+		t.Fatalf("apps = %v, want [shop blog]", sink.apps)
+	}
 
 	// Wrong token: still ACKed (matching official agent), but not stored.
 	send(buildFrame("badbad1", records))
 	time.Sleep(100 * time.Millisecond)
-	if len(sink.batches) != 1 {
+	if len(sink.batches) != 2 {
 		t.Fatal("record with bad token was stored")
 	}
 }

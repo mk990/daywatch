@@ -10,6 +10,7 @@ import (
 
 // ListFilter narrows record listings.
 type ListFilter struct {
+	App     string
 	Type    string
 	TraceID string
 	Group   string
@@ -30,6 +31,9 @@ func (f ListFilter) where() (string, []any) {
 	add := func(cond string, val any) {
 		args = append(args, val)
 		conds = append(conds, fmt.Sprintf(cond, len(args)))
+	}
+	if f.App != "" {
+		add("app = $%d", f.App)
 	}
 	if f.Type != "" {
 		add("type = $%d", f.Type)
@@ -70,7 +74,7 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 	if f.SortSlowest {
 		orderBy = "duration DESC, id DESC"
 	}
-	q := fmt.Sprintf(`SELECT id, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
+	q := fmt.Sprintf(`SELECT id, app, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
 		FROM records %s ORDER BY %s LIMIT %d OFFSET %d`, where, orderBy, f.Limit, f.Offset)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -82,7 +86,7 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 	for rows.Next() {
 		var r Record
 		var data []byte
-		if err := rows.Scan(&r.ID, &r.Type, &r.TS, &r.TraceID, &r.Group, &r.UserID,
+		if err := rows.Scan(&r.ID, &r.App, &r.Type, &r.TS, &r.TraceID, &r.Group, &r.UserID,
 			&r.Deploy, &r.Server, &r.Stage, &r.Duration, &r.Status, &data); err != nil {
 			return nil, err
 		}
@@ -102,11 +106,11 @@ func (s *Store) Count(ctx context.Context, f ListFilter) (int64, error) {
 }
 
 func (s *Store) Get(ctx context.Context, id int64) (*Record, error) {
-	row := s.pool.QueryRow(ctx, `SELECT id, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
+	row := s.pool.QueryRow(ctx, `SELECT id, app, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
 		FROM records WHERE id = $1`, id)
 	var r Record
 	var data []byte
-	if err := row.Scan(&r.ID, &r.Type, &r.TS, &r.TraceID, &r.Group, &r.UserID,
+	if err := row.Scan(&r.ID, &r.App, &r.Type, &r.TS, &r.TraceID, &r.Group, &r.UserID,
 		&r.Deploy, &r.Server, &r.Stage, &r.Duration, &r.Status, &data); err != nil {
 		return nil, err
 	}
@@ -122,9 +126,11 @@ type TypeCount struct {
 	Count int64
 }
 
-func (s *Store) CountsByType(ctx context.Context, since time.Time) ([]TypeCount, error) {
+func (s *Store) CountsByType(ctx context.Context, app string, since time.Time) ([]TypeCount, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT type, count(*) FROM records WHERE ts >= $1 GROUP BY type ORDER BY count(*) DESC`, since)
+		`SELECT type, count(*) FROM records
+		 WHERE ts >= $1 AND ($2 = '' OR app = $2)
+		 GROUP BY type ORDER BY count(*) DESC`, since, app)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +158,7 @@ type RouteStat struct {
 	LastSeen time.Time
 }
 
-func (s *Store) RequestStats(ctx context.Context, since time.Time, limit int) ([]RouteStat, error) {
+func (s *Store) RequestStats(ctx context.Context, app string, since time.Time, limit int) ([]RouteStat, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT group_hash,
 		       max(concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))) AS label,
@@ -163,10 +169,10 @@ func (s *Store) RequestStats(ctx context.Context, since time.Time, limit int) ([
 		       count(*) FILTER (WHERE status >= '500' AND status < '600' AND length(status) = 3),
 		       max(ts)
 		FROM records
-		WHERE type = 'request' AND ts >= $1
+		WHERE type = 'request' AND ts >= $1 AND ($3 = '' OR app = $3)
 		GROUP BY group_hash
 		ORDER BY count(*) DESC
-		LIMIT $2`, since, limit)
+		LIMIT $2`, since, limit, app)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +200,7 @@ type GroupStat struct {
 
 // GroupStats aggregates per group_hash. orderBy picks the ranking:
 // "count" (most frequent), "avg" or "max" (slowest), "total" (most time overall).
-func (s *Store) GroupStats(ctx context.Context, typ, labelExpr, orderBy string, since time.Time, limit int) ([]GroupStat, error) {
+func (s *Store) GroupStats(ctx context.Context, app, typ, labelExpr, orderBy string, since time.Time, limit int) ([]GroupStat, error) {
 	orderExpr := map[string]string{
 		"count": "count(*)",
 		"avg":   "avg(duration)",
@@ -207,11 +213,11 @@ func (s *Store) GroupStats(ctx context.Context, typ, labelExpr, orderBy string, 
 	q := fmt.Sprintf(`
 		SELECT group_hash, max(%s) AS label, count(*), avg(duration)::float8, max(duration), max(ts)
 		FROM records
-		WHERE type = $1 AND ts >= $2 AND group_hash <> ''
+		WHERE type = $1 AND ts >= $2 AND group_hash <> '' AND ($4 = '' OR app = $4)
 		GROUP BY group_hash
 		ORDER BY %s DESC
 		LIMIT $3`, labelExpr, orderExpr)
-	rows, err := s.pool.Query(ctx, q, typ, since, limit)
+	rows, err := s.pool.Query(ctx, q, typ, since, limit, app)
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +256,8 @@ type ClassBucket struct {
 
 // TimelineByClass returns a gap-free series of buckets from since until
 // `until` (or now when zero), with counts split by status class.
-// typ = "" aggregates all record types.
-func (s *Store) TimelineByClass(ctx context.Context, typ string, since, until time.Time, bucketMinutes int) ([]ClassBucket, error) {
+// typ = "" aggregates all record types; app = "" aggregates all apps.
+func (s *Store) TimelineByClass(ctx context.Context, app, typ string, since, until time.Time, bucketMinutes int) ([]ClassBucket, error) {
 	origin := since.Truncate(time.Minute)
 	end := time.Now()
 	if !until.IsZero() {
@@ -267,10 +273,10 @@ func (s *Store) TimelineByClass(ctx context.Context, typ string, since, until ti
 		       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration), 0)::float8,
 		       coalesce(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration), 0)::float8
 		FROM records
-		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1)
+		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1) AND ($5 = '' OR app = $5)
 		GROUP BY bucket
 		ORDER BY bucket`, statusClassSQL)
-	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes), end)
+	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes), end, app)
 	if err != nil {
 		return nil, err
 	}

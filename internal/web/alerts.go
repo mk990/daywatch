@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,7 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		"Rules":   rules,
 		"Events":  events,
 		"Types":   s.sections,
+		"Apps":    s.apps,
 		"Formats": alertFormats,
 		"Error":   r.URL.Query().Get("error"),
 	})
@@ -54,6 +56,7 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 	rule := store.AlertRule{
 		Name:            strings.TrimSpace(r.PostFormValue("name")),
 		Enabled:         true,
+		App:             r.PostFormValue("app"),
 		RecordType:      r.PostFormValue("record_type"),
 		StatusClass:     r.PostFormValue("status_class"),
 		Threshold:       formInt(r, "threshold", 1, 1, 1_000_000),
@@ -64,6 +67,10 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 		TelegramChatID:  strings.TrimSpace(r.PostFormValue("telegram_chat_id")),
 	}
 
+	if rule.App != "" && !slices.Contains(s.apps, rule.App) {
+		http.Redirect(w, r, "/alerts?error="+url.QueryEscape("unknown app"), http.StatusSeeOther)
+		return
+	}
 	if msg := validateRule(rule); msg != "" {
 		http.Redirect(w, r, "/alerts?error="+url.QueryEscape(msg), http.StatusSeeOther)
 		return

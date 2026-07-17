@@ -15,6 +15,7 @@ import (
 const schema = `
 CREATE TABLE IF NOT EXISTS records (
     id          BIGSERIAL PRIMARY KEY,
+    app         TEXT        NOT NULL DEFAULT '',
     type        TEXT        NOT NULL,
     ts          TIMESTAMPTZ NOT NULL,
     trace_id    TEXT        NOT NULL DEFAULT '',
@@ -28,15 +29,18 @@ CREATE TABLE IF NOT EXISTS records (
     data        JSONB       NOT NULL,
     received_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE records ADD COLUMN IF NOT EXISTS app TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS records_type_ts_idx ON records (type, ts DESC);
 CREATE INDEX IF NOT EXISTS records_trace_idx   ON records (trace_id) WHERE trace_id <> '';
 CREATE INDEX IF NOT EXISTS records_group_idx   ON records (type, group_hash, ts DESC) WHERE group_hash <> '';
 CREATE INDEX IF NOT EXISTS records_ts_idx      ON records (ts);
+CREATE INDEX IF NOT EXISTS records_app_idx     ON records (app, type, ts DESC) WHERE app <> '';
 `
 
 // Record is one Nightwatch event with hot columns extracted from the raw payload.
 type Record struct {
 	ID       int64
+	App      string
 	Type     string
 	TS       time.Time
 	TraceID  string
@@ -98,8 +102,9 @@ func (s *Store) migrate(ctx context.Context) error {
 
 func (s *Store) Close() { s.pool.Close() }
 
-// InsertRecords parses raw record objects and batch-inserts them.
-func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage) (int, error) {
+// InsertRecords parses raw record objects and batch-inserts them under the
+// given app ("" when token validation is off).
+func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app string) (int, error) {
 	rows := make([][]any, 0, len(raw))
 	var exceptionGroups []string
 	for _, r := range raw {
@@ -117,7 +122,7 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage) (int, 
 			exceptionGroups = append(exceptionGroups, rec.Group)
 		}
 		rows = append(rows, []any{
-			rec.Type, rec.TS, rec.TraceID, rec.Group, rec.UserID,
+			app, rec.Type, rec.TS, rec.TraceID, rec.Group, rec.UserID,
 			rec.Deploy, rec.Server, rec.Stage, rec.Duration, rec.Status, r,
 		})
 	}
@@ -127,7 +132,7 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage) (int, 
 
 	n, err := s.pool.CopyFrom(ctx,
 		pgx.Identifier{"records"},
-		[]string{"type", "ts", "trace_id", "group_hash", "user_id", "deploy", "server", "stage", "duration", "status", "data"},
+		[]string{"app", "type", "ts", "trace_id", "group_hash", "user_id", "deploy", "server", "stage", "duration", "status", "data"},
 		pgx.CopyFromRows(rows),
 	)
 	if err == nil {

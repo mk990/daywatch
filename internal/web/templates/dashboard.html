@@ -26,7 +26,7 @@
       <tbody>
       {{range .Routes}}
       <tr>
-        <td><a href="/section/requests?group={{.Group}}&range={{$.Base.Range}}" class="mono">{{.Label}}</a></td>
+        <td><a href="/section/requests?group={{.Group}}&range={{$.Base.Range}}{{$.Base.AppQS}}" class="mono">{{.Label}}</a></td>
         <td>{{.Count}}</td>
         <td>{{ms .AvgMs}}</td>
         <td>{{ms .P95Ms}}</td>
@@ -46,7 +46,7 @@
       <tbody>
       {{range .Exceptions}}
       <tr>
-        <td><a href="/exceptions/{{.Group}}" class="mono">{{printf "%.90s" .Label}}</a></td>
+        <td><a href="/exceptions/{{.Group}}?range={{$.Base.Range}}{{$.Base.AppQS}}" class="mono">{{printf "%.90s" .Label}}</a></td>
         <td>{{.Count}}</td>
         <td>{{ago .LastSeen}}</td>
       </tr>
@@ -66,7 +66,7 @@
       <tbody>
       {{range .SlowQueries}}
       <tr>
-        <td><a href="/section/queries?group={{.Group}}&range={{$.Base.Range}}" class="mono">{{printf "%.90s" .Label}}</a></td>
+        <td><a href="/section/queries?group={{.Group}}&range={{$.Base.Range}}{{$.Base.AppQS}}" class="mono"><span data-hl="sql">{{printf "%.90s" .Label}}</span></a></td>
         <td>{{.Count}}</td>
         <td>{{ms .AvgMs}}</td>
         <td>{{ms .MaxMs}}</td>
