@@ -203,8 +203,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	bm := bucketMinutes(since)
-	timeline, err := s.store.TimelineByClass(ctx, "request", since, bm)
+	bm := bucketMinutes(time.Since(since))
+	timeline, err := s.store.TimelineByClass(ctx, "request", since, time.Time{}, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -263,7 +263,11 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		if to, err := strconv.ParseInt(q.Get("to"), 10, 64); err == nil && to > from {
 			since = time.Unix(from, 0)
 			until = time.Unix(to, 0)
-			window = since.Local().Format("Jan 02 15:04") + " – " + until.Local().Format("15:04")
+			endLayout := "15:04"
+			if since.Local().Format("Jan 02") != until.Local().Format("Jan 02") {
+				endLayout = "Jan 02 15:04"
+			}
+			window = since.Local().Format("Jan 02 15:04") + " – " + until.Local().Format(endLayout)
 		}
 	}
 
@@ -309,11 +313,15 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Chart always shows the full selected range, not the drilled window,
-	// so the clicked bar stays visible in context.
-	_, rangeSince := s.base(r, sec.Slug)
-	bm := bucketMinutes(rangeSince)
-	timeline, err := s.store.TimelineByClass(ctx, sec.Type, rangeSince, bm)
+	// With a drag/click window active the chart zooms into it, re-bucketed
+	// at finer resolution; otherwise it shows the full selected range.
+	chartSince, chartUntil := since, until
+	span := time.Since(chartSince)
+	if !until.IsZero() {
+		span = until.Sub(chartSince)
+	}
+	bm := bucketMinutes(span)
+	timeline, err := s.store.TimelineByClass(ctx, sec.Type, chartSince, chartUntil, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -393,11 +401,16 @@ func httpError(w http.ResponseWriter, log *slog.Logger, err error) {
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
-func bucketMinutes(since time.Time) int {
-	span := time.Since(since)
+// bucketMinutes picks a bucket size that keeps the chart readable for any
+// span, down to one-minute buckets for tight drag-zoom windows.
+func bucketMinutes(span time.Duration) int {
 	switch {
+	case span <= 45*time.Minute:
+		return 1
 	case span <= 2*time.Hour:
 		return 2
+	case span <= 6*time.Hour:
+		return 5
 	case span <= 25*time.Hour:
 		return 30
 	case span <= 8*24*time.Hour:

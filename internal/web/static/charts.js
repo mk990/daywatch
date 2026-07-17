@@ -27,6 +27,73 @@ document.addEventListener('DOMContentLoaded', function () { initCharts(); });
 function renderStatusChart(el, data, opts) {
   if (!el || !data.length || typeof Chart === 'undefined') return;
 
+  function drillTo(from, to) {
+    if (!opts.drillUrl) return;
+    let url = opts.drillUrl + '?from=' + from + '&to=' + to;
+    if (opts.drillParams) url += '&' + opts.drillParams;
+    window.location.href = url;
+  }
+
+  // Drag-to-zoom: drag across the chart to select a time span, release to
+  // zoom into it. A short drag (<8px) falls through to the click handler.
+  const sel = { start: null, now: null, justDragged: false };
+
+  const dragZoomPlugin = {
+    id: 'dwDragZoom',
+    afterEvent(chart, args) {
+      const e = args.event;
+      if (!opts.drillUrl) return;
+      if (e.type === 'mousedown') {
+        const area = chart.chartArea;
+        if (e.y >= area.top && e.y <= area.bottom) {
+          sel.start = Math.min(Math.max(e.x, area.left), area.right);
+          sel.now = sel.start;
+          window.dwChartDragging = true; // pauses live-reload swaps
+        }
+      } else if (e.type === 'mousemove' && sel.start !== null) {
+        sel.now = Math.min(Math.max(e.x, chart.chartArea.left), chart.chartArea.right);
+        chart.draw();
+      } else if (e.type === 'mouseup' && sel.start !== null) {
+        const a = Math.min(sel.start, sel.now);
+        const b = Math.max(sel.start, sel.now);
+        sel.start = sel.now = null;
+        window.dwChartDragging = false;
+        chart.draw();
+        if (b - a < 8) return; // treat as a plain click
+        sel.justDragged = true;
+        const x = chart.scales.x;
+        let i0 = Math.round(x.getValueForPixel(a));
+        let i1 = Math.round(x.getValueForPixel(b));
+        i0 = Math.min(Math.max(i0, 0), data.length - 1);
+        i1 = Math.min(Math.max(i1, 0), data.length - 1);
+        if (i1 < i0) { const t = i0; i0 = i1; i1 = t; }
+        drillTo(data[i0].from, data[i1].to);
+      } else if (e.type === 'mouseout' && sel.start !== null) {
+        sel.start = sel.now = null;
+        window.dwChartDragging = false;
+        chart.draw();
+      }
+    },
+    afterDraw(chart) {
+      if (sel.start === null || sel.now === null || sel.start === sel.now) return;
+      const ctx = chart.ctx;
+      const area = chart.chartArea;
+      const a = Math.min(sel.start, sel.now);
+      const b = Math.max(sel.start, sel.now);
+      const accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#e8a33d').trim();
+      ctx.save();
+      ctx.fillStyle = accent + '26'; // ~15% alpha
+      ctx.fillRect(a, area.top, b - a, area.bottom - area.top);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(a, area.top); ctx.lineTo(a, area.bottom);
+      ctx.moveTo(b, area.top); ctx.lineTo(b, area.bottom);
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
   const css = getComputedStyle(document.documentElement);
   const color = (name, fallback) => (css.getPropertyValue(name) || fallback).trim();
   const C = {
@@ -73,22 +140,25 @@ function renderStatusChart(el, data, opts) {
 
   const chart = new Chart(el, {
     type: 'bar',
+    plugins: [dragZoomPlugin],
     data: { labels: data.map((p) => p.t), datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: { duration: 250 },
       interaction: { mode: 'index', intersect: false },
-      onHover: (e, active) => { e.native.target.style.cursor = active.length ? 'pointer' : 'default'; },
+      events: ['mousedown', 'mousemove', 'mouseup', 'mouseout', 'click', 'touchstart', 'touchmove', 'touchend'],
+      onHover: (e, active) => {
+        e.native.target.style.cursor = sel.start !== null ? 'col-resize' : (active.length ? 'pointer' : 'crosshair');
+      },
       onClick: (e, active) => {
+        if (sel.justDragged) { sel.justDragged = false; return; }
         if (!opts.drillUrl) return;
         const pts = chart.getElementsAtEventForMode(e, 'index', { intersect: false }, true);
         if (!pts.length) return;
         const p = data[pts[0].index];
         if (p.ok + p.warn + p.err + p.other === 0) return;
-        let url = opts.drillUrl + '?from=' + p.from + '&to=' + p.to;
-        if (opts.drillParams) url += '&' + opts.drillParams;
-        window.location.href = url;
+        drillTo(p.from, p.to);
       },
       scales: {
         x: {

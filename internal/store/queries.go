@@ -246,10 +246,15 @@ type ClassBucket struct {
 	AvgMs  float64
 }
 
-// TimelineByClass returns a gap-free series of buckets between since and now,
-// with counts split by status class. typ = "" aggregates all record types.
-func (s *Store) TimelineByClass(ctx context.Context, typ string, since time.Time, bucketMinutes int) ([]ClassBucket, error) {
+// TimelineByClass returns a gap-free series of buckets from since until
+// `until` (or now when zero), with counts split by status class.
+// typ = "" aggregates all record types.
+func (s *Store) TimelineByClass(ctx context.Context, typ string, since, until time.Time, bucketMinutes int) ([]ClassBucket, error) {
 	origin := since.Truncate(time.Minute)
+	end := time.Now()
+	if !until.IsZero() {
+		end = until
+	}
 	q := fmt.Sprintf(`
 		SELECT date_bin($3::interval, ts, $2) AS bucket,
 		       count(*) FILTER (WHERE %[1]s = 'ok'),
@@ -258,10 +263,10 @@ func (s *Store) TimelineByClass(ctx context.Context, typ string, since time.Time
 		       count(*) FILTER (WHERE %[1]s = 'other'),
 		       coalesce(avg(duration), 0)::float8
 		FROM records
-		WHERE ts >= $2 AND ($1 = '' OR type = $1)
+		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1)
 		GROUP BY bucket
 		ORDER BY bucket`, statusClassSQL)
-	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes))
+	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes), end)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +287,7 @@ func (s *Store) TimelineByClass(ctx context.Context, typ string, since time.Time
 	// Fill gaps so the chart shows a continuous series.
 	step := time.Duration(bucketMinutes) * time.Minute
 	var out []ClassBucket
-	for t := origin; !t.After(time.Now()); t = t.Add(step) {
+	for t := origin; t.Before(end); t = t.Add(step) {
 		if cb, ok := byBucket[t.Unix()]; ok {
 			out = append(out, cb)
 		} else {

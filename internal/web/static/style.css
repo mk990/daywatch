@@ -189,7 +189,7 @@ table.kv th { width: 130px; }
 
 canvas { display: block; width: 100%; }
 
-.chart-box { position: relative; height: 230px; }
+.chart-box { position: relative; height: 230px; user-select: none; }
 
 .hint { font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
 

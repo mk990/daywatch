@@ -24,6 +24,7 @@
   }
 
   function userIsBusy() {
+    if (window.dwChartDragging) return true;
     const a = document.activeElement;
     if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT')) return true;
     const sel = window.getSelection();
