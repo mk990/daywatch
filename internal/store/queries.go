@@ -17,6 +17,7 @@ type ListFilter struct {
 	Status  string
 	Search  string // matched against data::text
 	Since   time.Time
+	Until   time.Time
 	Limit   int
 	Offset  int
 }
@@ -48,6 +49,9 @@ func (f ListFilter) where() (string, []any) {
 	}
 	if !f.Since.IsZero() {
 		add("ts >= $%d", f.Since)
+	}
+	if !f.Until.IsZero() {
+		add("ts < $%d", f.Until)
 	}
 	if len(conds) == 0 {
 		return "", args
@@ -206,32 +210,67 @@ func (s *Store) GroupStats(ctx context.Context, typ, labelExpr string, since tim
 	return out, rows.Err()
 }
 
-// TimeBucket is one point of a time-series chart.
-type TimeBucket struct {
+// statusClassSQL buckets the status column into ok/warn/err/other,
+// mirroring the badge colors used across the panel.
+const statusClassSQL = `CASE
+	WHEN status ~ '^[23][0-9][0-9]$' OR status IN ('0','sent','processed','handled','hit','success','info','debug') THEN 'ok'
+	WHEN status ~ '^4[0-9][0-9]$' OR status IN ('warning','miss','released','notice') THEN 'warn'
+	WHEN status ~ '^5[0-9][0-9]$' OR status IN ('failed','unhandled','error','critical','emergency','alert') THEN 'err'
+	ELSE 'other'
+END`
+
+// ClassBucket is one time bucket split by status class.
+type ClassBucket struct {
 	Bucket time.Time
-	Count  int64
+	OK     int64
+	Warn   int64
+	Err    int64
+	Other  int64
 	AvgMs  float64
 }
 
-func (s *Store) Timeline(ctx context.Context, typ string, since time.Time, bucketMinutes int) ([]TimeBucket, error) {
-	q := `
-		SELECT date_bin($3::interval, ts, $2) AS bucket, count(*), coalesce(avg(duration),0)::float8
+// TimelineByClass returns a gap-free series of buckets between since and now,
+// with counts split by status class. typ = "" aggregates all record types.
+func (s *Store) TimelineByClass(ctx context.Context, typ string, since time.Time, bucketMinutes int) ([]ClassBucket, error) {
+	origin := since.Truncate(time.Minute)
+	q := fmt.Sprintf(`
+		SELECT date_bin($3::interval, ts, $2) AS bucket,
+		       count(*) FILTER (WHERE %[1]s = 'ok'),
+		       count(*) FILTER (WHERE %[1]s = 'warn'),
+		       count(*) FILTER (WHERE %[1]s = 'err'),
+		       count(*) FILTER (WHERE %[1]s = 'other'),
+		       coalesce(avg(duration), 0)::float8
 		FROM records
 		WHERE ts >= $2 AND ($1 = '' OR type = $1)
 		GROUP BY bucket
-		ORDER BY bucket`
-	rows, err := s.pool.Query(ctx, q, typ, since.Truncate(time.Minute), fmt.Sprintf("%d minutes", bucketMinutes))
+		ORDER BY bucket`, statusClassSQL)
+	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []TimeBucket
+
+	byBucket := map[int64]ClassBucket{}
 	for rows.Next() {
-		var tb TimeBucket
-		if err := rows.Scan(&tb.Bucket, &tb.Count, &tb.AvgMs); err != nil {
+		var cb ClassBucket
+		if err := rows.Scan(&cb.Bucket, &cb.OK, &cb.Warn, &cb.Err, &cb.Other, &cb.AvgMs); err != nil {
 			return nil, err
 		}
-		out = append(out, tb)
+		byBucket[cb.Bucket.Unix()] = cb
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Fill gaps so the chart shows a continuous series.
+	step := time.Duration(bucketMinutes) * time.Minute
+	var out []ClassBucket
+	for t := origin; !t.After(time.Now()); t = t.Add(step) {
+		if cb, ok := byBucket[t.Unix()]; ok {
+			out = append(out, cb)
+		} else {
+			out = append(out, ClassBucket{Bucket: t})
+		}
+	}
+	return out, nil
 }

@@ -164,3 +164,20 @@ pre.payload {
 table.kv th { width: 130px; }
 
 canvas { display: block; width: 100%; }
+
+.chart-box { position: relative; height: 230px; }
+
+.hint { font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
+
+.window-chip {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  background: var(--bg3);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 14px;
+  margin-bottom: 14px;
+}
+.window-chip a { color: var(--muted); font-size: 12.5px; text-decoration: none; }
+.window-chip a:hover { color: var(--err); }

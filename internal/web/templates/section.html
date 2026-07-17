@@ -2,6 +2,30 @@
 
 <h1>{{.Section.Icon}} {{.Section.Title}} <span class="count">({{.Count}})</span></h1>
 
+{{if .Window}}
+<div class="window-chip">
+  🕐 Showing {{.Window}}
+  <a href="/section/{{.Section.Slug}}?{{.ClearQS}}">✕ clear window</a>
+</div>
+{{end}}
+
+<div class="card">
+  <h2>{{.Section.Title}} over time <span class="hint">click a bar to inspect</span></h2>
+  <div class="chart-box"><canvas id="section-chart"></canvas></div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  renderStatusChart('section-chart', {{.Chart}}, {
+    drillUrl: '/section/{{.Section.Slug}}',
+    drillParams: {{.ClearQS}}
+    {{- if eq .Section.Type "request"}}, okLabel: '2xx/3xx', warnLabel: '4xx', errLabel: '5xx'{{end}}
+    {{- if eq .Section.Type "exception"}}, okLabel: 'Handled', errLabel: 'Unhandled'{{end}}
+    {{- if eq .Section.Type "log"}}, okLabel: 'Debug/Info', warnLabel: 'Notice/Warning', errLabel: 'Error+'{{end}}
+    {{- if eq .Section.Type "cache-event"}}, okLabel: 'Hit', warnLabel: 'Miss'{{end}}
+  });
+});
+</script>
+
 {{if .Groups}}
 <div class="card">
   <h2>{{.Section.GroupTitle}}</h2>
@@ -26,6 +50,7 @@
   <form method="get" class="filters">
     <input type="hidden" name="range" value="{{.Base.Range}}">
     {{if .GroupParam}}<input type="hidden" name="group" value="{{.GroupParam}}">{{end}}
+    {{if .Window}}<input type="hidden" name="from" value="{{.FromParam}}"><input type="hidden" name="to" value="{{.ToParam}}">{{end}}
     <input type="search" name="search" placeholder="Search payload…" value="{{.Search}}">
     {{if .Section.StatusLabel}}<input type="text" name="status" placeholder="{{.Section.StatusLabel}}" value="{{.Status}}" class="short">{{end}}
     <button type="submit">Filter</button>

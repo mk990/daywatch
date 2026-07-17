@@ -183,7 +183,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	timeline, err := s.store.Timeline(ctx, "request", since, bucketMinutes(since))
+	bm := bucketMinutes(since)
+	timeline, err := s.store.TimelineByClass(ctx, "request", since, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -208,7 +209,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Routes":      routes,
 		"SlowQueries": slowQueries,
 		"Exceptions":  exceptions,
-		"Timeline":    timelineJSON(timeline),
+		"Chart":       chartJSON(timeline, bm),
 		"Recent":      recent,
 	})
 }
@@ -229,9 +230,21 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 	}
 	const perPage = 50
 
+	// A clicked chart bar drills into its exact time window.
+	var until time.Time
+	var window string
+	if from, err := strconv.ParseInt(q.Get("from"), 10, 64); err == nil && from > 0 {
+		if to, err := strconv.ParseInt(q.Get("to"), 10, 64); err == nil && to > from {
+			since = time.Unix(from, 0)
+			until = time.Unix(to, 0)
+			window = since.Local().Format("Jan 02 15:04") + " – " + until.Local().Format("15:04")
+		}
+	}
+
 	filter := store.ListFilter{
 		Type:   sec.Type,
 		Since:  since,
+		Until:  until,
 		Status: q.Get("status"),
 		UserID: q.Get("user"),
 		Group:  q.Get("group"),
@@ -260,9 +273,24 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Chart always shows the full selected range, not the drilled window,
+	// so the clicked bar stays visible in context.
+	_, rangeSince := s.base(r, sec.Slug)
+	bm := bucketMinutes(rangeSince)
+	timeline, err := s.store.TimelineByClass(ctx, sec.Type, rangeSince, bm)
+	if err != nil {
+		httpError(w, s.log, err)
+		return
+	}
+
 	qs := q
 	qs.Del("page")
 	base.QueryString = qs.Encode()
+
+	clearQS := q
+	clearQS.Del("page")
+	clearQS.Del("from")
+	clearQS.Del("to")
 
 	s.render(w, "section.html", map[string]any{
 		"Base":       base,
@@ -277,6 +305,11 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		"Search":     q.Get("search"),
 		"Status":     q.Get("status"),
 		"GroupParam": q.Get("group"),
+		"Window":     window,
+		"FromParam":  q.Get("from"),
+		"ToParam":    q.Get("to"),
+		"ClearQS":    clearQS.Encode(),
+		"Chart":      chartJSON(timeline, bm),
 	})
 }
 
@@ -329,15 +362,37 @@ func bucketMinutes(since time.Time) int {
 	}
 }
 
-func timelineJSON(buckets []store.TimeBucket) template.JS {
+// chartJSON serializes classified buckets for the interactive chart:
+// per-bucket status-class counts, avg duration, and the bucket's unix
+// window so clicks can drill into the exact time range.
+func chartJSON(buckets []store.ClassBucket, bucketMinutes int) template.JS {
 	type pt struct {
-		T string  `json:"t"`
-		C int64   `json:"c"`
-		D float64 `json:"d"`
+		T     string  `json:"t"`
+		From  int64   `json:"from"`
+		To    int64   `json:"to"`
+		OK    int64   `json:"ok"`
+		Warn  int64   `json:"warn"`
+		Err   int64   `json:"err"`
+		Other int64   `json:"other"`
+		D     float64 `json:"d"`
+	}
+	span := time.Duration(bucketMinutes) * time.Minute
+	layout := "15:04"
+	if bucketMinutes >= 180 {
+		layout = "Jan 02 15:04"
 	}
 	pts := make([]pt, len(buckets))
 	for i, b := range buckets {
-		pts[i] = pt{T: b.Bucket.Local().Format("15:04 Jan 02"), C: b.Count, D: b.AvgMs}
+		pts[i] = pt{
+			T:     b.Bucket.Local().Format(layout),
+			From:  b.Bucket.Unix(),
+			To:    b.Bucket.Add(span).Unix(),
+			OK:    b.OK,
+			Warn:  b.Warn,
+			Err:   b.Err,
+			Other: b.Other,
+			D:     b.AvgMs,
+		}
 	}
 	b, err := json.Marshal(pts)
 	if err != nil {

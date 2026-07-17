@@ -12,9 +12,18 @@
 </div>
 
 <div class="card">
-  <h2>Request volume</h2>
-  <canvas id="timeline" height="120"></canvas>
+  <h2>Requests — status &amp; latency <span class="hint">click a bar to inspect</span></h2>
+  <div class="chart-box"><canvas id="timeline"></canvas></div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  renderStatusChart('timeline', {{.Chart}}, {
+    drillUrl: '/section/requests',
+    drillParams: 'range={{.Base.Range}}',
+    okLabel: '2xx/3xx', warnLabel: '4xx', errLabel: '5xx'
+  });
+});
+</script>
 
 <div class="grid-2">
   <div class="card">
@@ -97,32 +106,5 @@
     {{else}}<p class="empty">Nothing ingested yet. Point your Laravel app's <code>NIGHTWATCH_INGEST_URI</code> at this server.</p>{{end}}
   </div>
 </div>
-
-<script>
-(function () {
-  const data = {{.Timeline}};
-  const canvas = document.getElementById('timeline');
-  if (!canvas || !data.length) return;
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width = canvas.parentElement.clientWidth - 32;
-  const H = canvas.height;
-  const pad = 24;
-  const max = Math.max(...data.map(p => p.c), 1);
-  const bw = Math.max(1, (W - pad * 2) / data.length - 2);
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#e8a33d';
-  data.forEach((p, i) => {
-    const h = (p.c / max) * (H - pad * 2);
-    const x = pad + i * ((W - pad * 2) / data.length);
-    ctx.fillRect(x, H - pad - h, bw, h);
-  });
-  ctx.fillStyle = getComputedStyle(document.body).color;
-  ctx.font = '11px sans-serif';
-  ctx.fillText(data[0].t, pad, H - 6);
-  const last = data[data.length - 1].t;
-  ctx.fillText(last, W - pad - ctx.measureText(last).width, H - 6);
-  ctx.fillText('max ' + max, pad, 14);
-  canvas.title = 'Requests per bucket';
-})();
-</script>
 
 {{template "footer" .Base}}
