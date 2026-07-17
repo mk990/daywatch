@@ -70,6 +70,14 @@ NIGHTWATCH_INGEST_URI=daywatch-host:2407
 
 Hit a few routes in your app and open the Daywatch panel. That's it.
 
+To also capture application **logs**, add the `nightwatch` channel (auto-registered by the
+package) to your log stack:
+
+```dotenv
+LOG_CHANNEL=stack
+LOG_STACK=single,nightwatch
+```
+
 > Tokens are never sent in plain text: the package transmits the first 7 hex chars of
 > `xxh128(NIGHTWATCH_TOKEN)`, and Daywatch validates against the same hash. If
 > `NIGHTWATCH_TOKEN` is unset on the Daywatch side, any token is accepted (fine for local
