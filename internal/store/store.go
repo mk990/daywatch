@@ -87,8 +87,10 @@ func New(ctx context.Context, databaseURL string, log *slog.Logger) (*Store, err
 }
 
 func (s *Store) migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, schema)
-	return err
+	if _, err := s.pool.Exec(ctx, schema); err != nil {
+		return err
+	}
+	return s.migrateAlerts(ctx)
 }
 
 func (s *Store) Close() { s.pool.Close() }

@@ -32,6 +32,8 @@ type Config struct {
 	Password string
 	// JWTSecret signs session tokens. Derived from credentials when unset.
 	JWTSecret []byte
+	// BaseURL is the public panel URL included in alert notifications.
+	BaseURL string
 }
 
 func FromEnv() (*Config, error) {
@@ -60,6 +62,7 @@ func FromEnv() (*Config, error) {
 		cfg.TokenHash = TokenHash(cfg.Token)
 	}
 
+	cfg.BaseURL = os.Getenv("DW_BASE_URL")
 	cfg.Username = os.Getenv("DAYWATCH_USERNAME")
 	cfg.Password = os.Getenv("DAYWATCH_PASSWORD")
 	if (cfg.Username == "") != (cfg.Password == "") {

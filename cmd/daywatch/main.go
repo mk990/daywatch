@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/mk/daywatch/internal/alert"
 	"github.com/mk/daywatch/internal/config"
 	"github.com/mk/daywatch/internal/ingest"
 	"github.com/mk/daywatch/internal/store"
@@ -61,6 +62,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	evaluator := alert.New(st, log, cfg.BaseURL, panel.Hub())
+	panel.SetAlertTester(evaluator)
+
 	// Wrap the store so every successful ingest wakes live-reload clients.
 	sink := &notifyingSink{store: st, hub: panel.Hub()}
 	ing := ingest.New(cfg.IngestAddr, cfg.TokenHash, cfg.ReadTimeout, sink, log)
@@ -83,6 +87,7 @@ func main() {
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return ing.Serve(gctx) })
 	g.Go(func() error { return panel.Run(gctx, cfg.HTTPAddr) })
+	g.Go(func() error { return evaluator.Run(gctx) })
 	g.Go(func() error {
 		if cfg.RetentionDays <= 0 {
 			return nil

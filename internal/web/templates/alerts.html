@@ -1,0 +1,118 @@
+{{template "header" .Base}}
+
+<h1>{{icon "siren"}} Alerts</h1>
+
+{{if .Error}}<div class="login-error">{{.Error}}</div>{{end}}
+
+<div class="card">
+  <h2>New rule</h2>
+  <form method="post" action="/alerts" class="alert-form">
+    <div class="form-row">
+      <label>Name
+        <input type="text" name="name" placeholder="Too many 5xx errors" required>
+      </label>
+      <label>Record type
+        <select name="record_type">
+          <option value="">any</option>
+          {{range .Types}}<option value="{{.Type}}">{{.Title}}</option>{{end}}
+        </select>
+      </label>
+      <label>Severity
+        <select name="status_class">
+          <option value="err">errors only</option>
+          <option value="warn">warnings only</option>
+          <option value="">any record</option>
+        </select>
+      </label>
+      <label>Threshold (≥)
+        <input type="number" name="threshold" value="5" min="1">
+      </label>
+      <label>Window (min)
+        <input type="number" name="window_minutes" value="5" min="1" max="1440">
+      </label>
+      <label>Cooldown (min)
+        <input type="number" name="cooldown_minutes" value="15" min="1">
+      </label>
+    </div>
+    <div class="form-row">
+      <label class="grow">Webhook URL
+        <input type="url" name="channel_url" placeholder="https://hooks.slack.com/services/… or any endpoint" required>
+      </label>
+      <label>Format
+        <select name="channel_format" id="alert-format">
+          {{range .Formats}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+      </label>
+      <label id="tg-chat" hidden>Telegram chat ID
+        <input type="text" name="telegram_chat_id" placeholder="-100123456789">
+      </label>
+      <button type="submit">Create rule</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Rules</h2>
+  {{if .Rules}}
+  <table>
+    <thead><tr><th>Rule</th><th>Condition</th><th>Channel</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {{range .Rules}}
+    <tr {{if not .Enabled}}class="dim"{{end}}>
+      <td><strong>{{.Name}}</strong></td>
+      <td class="mono small">
+        ≥{{.Threshold}} {{if .StatusClass}}{{.StatusClass}}{{else}}any{{end}}
+        {{if .RecordType}}{{.RecordType}}{{else}}record{{end}}(s) / {{.WindowMinutes}}m
+        <span class="hint">cooldown {{.CooldownMinutes}}m</span>
+      </td>
+      <td class="mono small">{{.ChannelFormat}} → {{printf "%.48s" .ChannelURL}}</td>
+      <td>{{if .Enabled}}<span class="badge ok">active</span>{{else}}<span class="badge">paused</span>{{end}}</td>
+      <td class="actions">
+        <form method="post" action="/alerts/{{.ID}}/test"><button class="btn-sm" title="Send test notification">test</button></form>
+        <form method="post" action="/alerts/{{.ID}}/toggle"><button class="btn-sm">{{if .Enabled}}pause{{else}}resume{{end}}</button></form>
+        <form method="post" action="/alerts/{{.ID}}/delete" onsubmit="return confirm('Delete rule {{.Name}}?')"><button class="btn-sm danger">delete</button></form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No rules yet. Create one above — e.g. ≥5 error requests in 5 minutes.</p>
+  {{end}}
+</div>
+
+<div class="card">
+  <h2>Recent alerts</h2>
+  {{if .Events}}
+  <table>
+    <thead><tr><th>When</th><th>Rule</th><th>Matched</th><th>Delivery</th><th>Message</th></tr></thead>
+    <tbody>
+    {{range .Events}}
+    <tr>
+      <td title="{{timefmt .FiredAt}}">{{ago .FiredAt}}</td>
+      <td>{{.RuleName}}</td>
+      <td>{{.Matched}}</td>
+      <td>{{if .Delivered}}<span class="badge ok">{{icon "check"}} sent</span>{{else}}<span class="badge err" title="{{.Error}}">{{icon "x"}} failed</span>{{end}}</td>
+      <td class="mono small">{{printf "%.110s" .Message}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No alerts have fired yet.</p>
+  {{end}}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const fmt = document.getElementById('alert-format');
+  const tg = document.getElementById('tg-chat');
+  if (fmt && tg) {
+    const sync = () => { tg.hidden = fmt.value !== 'telegram'; };
+    fmt.addEventListener('change', sync);
+    sync();
+  }
+});
+</script>
+
+{{template "footer" .Base}}

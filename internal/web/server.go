@@ -52,10 +52,11 @@ type Server struct {
 	store    *store.Store
 	log      *slog.Logger
 	tmpl     *template.Template
-	sections []Section
-	bySlug   map[string]*Section
-	hub      *Hub
-	auth     AuthConfig
+	sections    []Section
+	bySlug      map[string]*Section
+	hub         *Hub
+	auth        AuthConfig
+	alertTester AlertTester
 }
 
 // Hub returns the live-update hub; the ingest pipeline calls Notify on it.
@@ -131,6 +132,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /login", s.handleLogin)
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("GET /logout", s.handleLogout)
+	mux.HandleFunc("GET /alerts", s.handleAlerts)
+	mux.HandleFunc("POST /alerts", s.handleAlertCreate)
+	mux.HandleFunc("POST /alerts/{id}/toggle", s.handleAlertToggle)
+	mux.HandleFunc("POST /alerts/{id}/delete", s.handleAlertDelete)
+	mux.HandleFunc("POST /alerts/{id}/test", s.handleAlertTest)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

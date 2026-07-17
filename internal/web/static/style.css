@@ -297,3 +297,54 @@ canvas { display: block; width: 100%; }
   cursor: pointer;
 }
 .login-card button:hover { filter: brightness(1.1); }
+
+/* --- alerts --- */
+.alert-form .form-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.alert-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.alert-form label.grow { flex: 1; min-width: 280px; }
+.alert-form input, .alert-form select {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+.alert-form input[type="number"] { width: 90px; }
+.alert-form input:focus, .alert-form select:focus { outline: none; border-color: var(--accent); }
+.alert-form button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+td.actions { white-space: nowrap; }
+td.actions form { display: inline-block; margin-left: 4px; }
+.btn-sm {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-sm:hover { border-color: var(--accent); }
+.btn-sm.danger:hover { border-color: var(--err); color: var(--err); }
+tr.dim { opacity: .5; }
+.badge .ico { width: 11px; height: 11px; }
