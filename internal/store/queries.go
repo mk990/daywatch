@@ -263,6 +263,11 @@ func (s *Store) TimelineByClass(ctx context.Context, app, typ string, since, unt
 	if !until.IsZero() {
 		end = until
 	}
+	// Hour-or-larger buckets are served from pre-aggregated hourly rollups,
+	// which stay fast on long ranges and outlive raw-record pruning.
+	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
+		return s.timelineFromRollups(ctx, app, typ, since.Truncate(time.Hour), end, bucketMinutes)
+	}
 	q := fmt.Sprintf(`
 		SELECT date_bin($3::interval, ts, $2) AS bucket,
 		       count(*) FILTER (WHERE %[1]s = 'ok'),

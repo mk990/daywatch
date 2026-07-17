@@ -36,6 +36,8 @@ type Config struct {
 	Apps []App
 	// RetentionDays: records older than this are pruned. 0 disables pruning.
 	RetentionDays int
+	// RollupDays: hourly chart rollups are kept this long (0 = forever).
+	RollupDays int
 	// ReadTimeout for ingest connections.
 	ReadTimeout time.Duration
 	// Username/Password protect the web panel. Both empty disables auth.
@@ -54,6 +56,7 @@ func FromEnv() (*Config, error) {
 		DatabaseURL:   getenv("DATABASE_URL", ""),
 		Token:         getenv("NIGHTWATCH_TOKEN", ""),
 		RetentionDays: 14,
+		RollupDays:    90,
 		ReadTimeout:   10 * time.Second,
 	}
 
@@ -67,6 +70,13 @@ func FromEnv() (*Config, error) {
 			return nil, fmt.Errorf("invalid DW_RETENTION_DAYS %q: %w", v, err)
 		}
 		cfg.RetentionDays = n
+	}
+	if v := os.Getenv("DW_ROLLUP_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DW_ROLLUP_DAYS %q: %w", v, err)
+		}
+		cfg.RollupDays = n
 	}
 
 	if cfg.Token != "" {

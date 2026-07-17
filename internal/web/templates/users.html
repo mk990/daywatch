@@ -1,0 +1,33 @@
+{{template "header" .Base}}
+
+<h1>{{icon "users"}} Users</h1>
+
+<div class="card">
+  <h2>Active users <span class="hint">{{.Base.RangeLabel}}, most recent first</span></h2>
+  {{if .Users}}
+  <table>
+    <thead><tr><th>User</th><th>Requests</th><th>Errors</th><th>Total events</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {{range .Users}}
+    <tr>
+      <td>
+        <a href="/user/{{.UserID}}?range={{$.Base.Range}}{{$.Base.AppQS}}">
+          <strong>{{if .Name}}{{.Name}}{{else}}#{{.UserID}}{{end}}</strong>
+        </a>
+        <span class="hint">{{with .Username}}{{.}} · {{end}}id {{.UserID}}</span>
+      </td>
+      <td>{{.Requests}}</td>
+      <td>{{if .Errors}}<span class="badge err">{{.Errors}}</span>{{else}}0{{end}}</td>
+      <td>{{.Events}}</td>
+      <td title="{{timefmt .LastSeen}}">{{ago .LastSeen}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No user activity in this time range. User attribution requires an authenticated
+  user in the Laravel app when records are captured.</p>
+  {{end}}
+</div>
+
+{{template "footer" .Base}}

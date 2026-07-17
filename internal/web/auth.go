@@ -3,8 +3,10 @@ package web
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -12,6 +14,71 @@ import (
 
 const sessionCookie = "daywatch_session"
 const sessionTTL = 7 * 24 * time.Hour
+
+// Login rate limiting: after loginMaxFailures failed attempts from one IP
+// within loginFailWindow, further attempts get 429 until the window passes.
+const (
+	loginMaxFailures = 5
+	loginFailWindow  = 15 * time.Minute
+)
+
+type loginLimiter struct {
+	mu       sync.Mutex
+	failures map[string][]time.Time
+}
+
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{failures: map[string][]time.Time{}}
+}
+
+func (l *loginLimiter) prune(ip string, now time.Time) []time.Time {
+	kept := l.failures[ip][:0]
+	for _, t := range l.failures[ip] {
+		if now.Sub(t) < loginFailWindow {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		delete(l.failures, ip)
+		return nil
+	}
+	l.failures[ip] = kept
+	return kept
+}
+
+func (l *loginLimiter) blocked(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.prune(ip, time.Now())) >= loginMaxFailures
+}
+
+func (l *loginLimiter) recordFailure(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	l.prune(ip, now)
+	l.failures[ip] = append(l.failures[ip], now)
+}
+
+func (l *loginLimiter) reset(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.failures, ip)
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// secureRequest reports whether the client connection is HTTPS, directly
+// or via a trusted reverse proxy setting X-Forwarded-Proto.
+func secureRequest(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
 
 // AuthConfig protects the panel. Empty Username disables authentication.
 type AuthConfig struct {
@@ -90,6 +157,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var loginError string
 	if r.Method == http.MethodPost {
+		ip := clientIP(r)
+		if s.loginLimiter.blocked(ip) {
+			s.log.Warn("login rate limited", "remote", r.RemoteAddr)
+			w.WriteHeader(http.StatusTooManyRequests)
+			s.tmpl.ExecuteTemplate(w, "login.html", map[string]any{
+				"Error": "Too many failed attempts. Try again in a few minutes.",
+			})
+			return
+		}
 		if err := r.ParseForm(); err == nil &&
 			s.auth.check(r.PostFormValue("username"), r.PostFormValue("password")) {
 			token, err := s.issueToken()
@@ -97,17 +173,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				httpError(w, s.log, err)
 				return
 			}
+			s.loginLimiter.reset(ip)
 			http.SetCookie(w, &http.Cookie{
 				Name:     sessionCookie,
 				Value:    token,
 				Path:     "/",
 				MaxAge:   int(sessionTTL.Seconds()),
 				HttpOnly: true,
+				Secure:   secureRequest(r),
 				SameSite: http.SameSiteLaxMode,
 			})
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
+		s.loginLimiter.recordFailure(ip)
 		s.log.Warn("failed login attempt", "remote", r.RemoteAddr)
 		time.Sleep(500 * time.Millisecond) // dampen brute force
 		loginError = "Invalid username or password."
@@ -129,6 +208,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   secureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

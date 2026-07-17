@@ -20,6 +20,7 @@ func testServer(t *testing.T) *Server {
 			Password: "s3cret",
 			Secret:   []byte("test-signing-secret"),
 		},
+		loginLimiter: newLoginLimiter(),
 	}
 	return s
 }

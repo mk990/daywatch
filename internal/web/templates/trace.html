@@ -2,7 +2,49 @@
 
 <h1>Trace <span class="mono">{{.Trace}}</span></h1>
 
+{{if .Rows}}
 <div class="card">
+  <h2>Waterfall <span class="hint">total span {{ms .SpanUS}} · {{len .Rows}} records</span></h2>
+  <div class="wf">
+    <div class="wf-row wf-axis">
+      <div class="wf-label"></div>
+      <div class="wf-track">
+        {{range .Ticks}}<span class="wf-tick" style="left: {{.Left}}%">{{.Label}}</span>{{end}}
+      </div>
+    </div>
+    {{range .Rows}}
+    <div class="wf-row">
+      <div class="wf-label">
+        <span class="pill">{{.Rec.Type}}</span>
+        <a href="/record/{{.Rec.ID}}" class="mono small" title="{{.Label}}">{{.Label}}</a>
+      </div>
+      <div class="wf-track">
+        {{if .Marker}}
+        <span class="wf-marker {{.Class}}{{if .Err}} wf-err{{end}}" style="left: {{printf "%.2f" .OffsetPct}}%" title="{{.Label}}"></span>
+        {{else}}
+        <span class="wf-bar {{.Class}}{{if .Err}} wf-err{{end}}" style="left: {{printf "%.2f" .OffsetPct}}%; width: {{printf "%.2f" .WidthPct}}%"
+              title="{{.Label}} — {{ms .Rec.Duration}}"></span>
+        <span class="wf-dur" style="left: {{printf "%.2f" .EndPct}}%">{{ms .Rec.Duration}}</span>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+  <div class="wf-legend">
+    <span><i class="wf-request"></i> request</span>
+    <span><i class="wf-query"></i> query</span>
+    <span><i class="wf-cache"></i> cache</span>
+    <span><i class="wf-outgoing"></i> outgoing</span>
+    <span><i class="wf-job"></i> jobs</span>
+    <span><i class="wf-mail"></i> mail</span>
+    <span><i class="wf-exception"></i> exception</span>
+    <span><i class="wf-log"></i> log/other</span>
+  </div>
+</div>
+{{end}}
+
+<div class="card">
+  <h2>Records</h2>
   {{if .Records}}
   <table>
     <thead><tr><th>When</th><th>Type</th><th>Summary</th><th>Duration</th><th>Status</th><th></th></tr></thead>

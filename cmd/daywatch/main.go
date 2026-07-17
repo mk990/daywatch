@@ -98,6 +98,27 @@ func main() {
 	g.Go(func() error { return panel.Run(gctx, cfg.HTTPAddr) })
 	g.Go(func() error { return evaluator.Run(gctx) })
 	g.Go(func() error {
+		// Full backfill once, then refresh the recent hours every 5 minutes
+		// so long-range charts read from rollups instead of raw records.
+		if err := st.UpdateRollups(gctx, time.Time{}); err != nil {
+			log.Warn("rollup backfill failed", "error", err)
+		} else {
+			log.Info("rollup backfill complete")
+		}
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-gctx.Done():
+				return nil
+			case <-ticker.C:
+				if err := st.UpdateRollups(gctx, time.Now().Add(-3*time.Hour)); err != nil {
+					log.Error("rollup update failed", "error", err)
+				}
+			}
+		}
+	})
+	g.Go(func() error {
 		if cfg.RetentionDays <= 0 {
 			return nil
 		}
@@ -113,6 +134,11 @@ func main() {
 					log.Error("prune failed", "error", err)
 				} else if n > 0 {
 					log.Info("pruned old records", "deleted", n)
+				}
+				if cfg.RollupDays > 0 {
+					if _, err := st.PruneRollups(gctx, time.Duration(cfg.RollupDays)*24*time.Hour); err != nil {
+						log.Error("rollup prune failed", "error", err)
+					}
 				}
 			}
 		}

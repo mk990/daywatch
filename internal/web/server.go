@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -52,21 +53,22 @@ type Column struct {
 }
 
 type Server struct {
-	store       *store.Store
-	log         *slog.Logger
-	tmpl        *template.Template
-	sections    []Section
-	bySlug      map[string]*Section
-	hub         *Hub
-	auth        AuthConfig
-	alertTester AlertTester
+	store        *store.Store
+	log          *slog.Logger
+	tmpl         *template.Template
+	sections     []Section
+	bySlug       map[string]*Section
+	hub          *Hub
+	auth         AuthConfig
+	loginLimiter *loginLimiter
+	alertTester  AlertTester
 }
 
 // Hub returns the live-update hub; the ingest pipeline calls Notify on it.
 func (s *Server) Hub() *Hub { return s.hub }
 
 func New(st *store.Store, log *slog.Logger, auth AuthConfig) (*Server, error) {
-	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(), auth: auth}
+	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(), auth: auth, loginLimiter: newLoginLimiter()}
 	s.sections = buildSections()
 	for i := range s.sections {
 		s.bySlug[s.sections[i].Slug] = &s.sections[i]
@@ -132,6 +134,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /exceptions", s.handleExceptions)
 	mux.HandleFunc("GET /exceptions/{group}", s.handleExceptionDetail)
 	mux.HandleFunc("POST /exceptions/{group}/status", s.handleExceptionStatus)
+	mux.HandleFunc("GET /users", s.handleUsers)
+	mux.HandleFunc("GET /user/{uid}", s.handleUserDetail)
 	mux.HandleFunc("GET /record/{id}", s.handleRecord)
 	mux.HandleFunc("GET /trace/{trace}", s.handleTrace)
 	mux.HandleFunc("GET /events", s.handleEvents)
@@ -201,13 +205,8 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		s.log.Error("listing apps failed", "error", err)
 	}
 	app := ""
-	if want := q.Get("app"); want != "" {
-		for _, name := range apps {
-			if name == want {
-				app = want
-				break
-			}
-		}
+	if want := q.Get("app"); want != "" && slices.Contains(apps, want) {
+		app = want
 	}
 
 	b := baseData{
@@ -331,13 +330,15 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Exceptions get a dedicated group-centric page.
-	if sec.Slug == "exceptions" {
-		dest := "/exceptions"
+	// Exceptions and users get dedicated aggregate pages.
+	if sec.Slug == "exceptions" || sec.Slug == "users" {
+		dest := "/" + sec.Slug
 		q := r.URL.Query()
-		if g := q.Get("group"); g != "" {
-			dest += "/" + g
-			q.Del("group")
+		if sec.Slug == "exceptions" {
+			if g := q.Get("group"); g != "" {
+				dest += "/" + g
+				q.Del("group")
+			}
 		}
 		if enc := q.Encode(); enc != "" {
 			dest += "?" + enc
@@ -481,6 +482,59 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "record.html", map[string]any{"Base": base, "Record": rec})
 }
 
+// wfRow is one row of the trace waterfall: a record positioned on the
+// trace's timeline by start offset and duration.
+type wfRow struct {
+	Rec       store.Record
+	Label     string
+	OffsetPct float64
+	WidthPct  float64
+	Class     string // bar color class, derived from the record type
+	Err       bool
+	Marker    bool    // durationless records render as a point, not a bar
+	EndPct    float64 // OffsetPct + WidthPct, where the duration label sits
+}
+
+var wfClasses = map[string]string{
+	"request":          "wf-request",
+	"query":            "wf-query",
+	"cache-event":      "wf-cache",
+	"outgoing-request": "wf-outgoing",
+	"job-attempt":      "wf-job",
+	"queued-job":       "wf-job",
+	"scheduled-task":   "wf-job",
+	"mail":             "wf-mail",
+	"notification":     "wf-mail",
+	"exception":        "wf-exception",
+	"log":              "wf-log",
+}
+
+// recordSummary picks the most descriptive payload field for a record.
+func recordSummary(rec store.Record) string {
+	for _, key := range []string{"url", "sql", "message", "name", "class", "key", "id"} {
+		if v := anyToString(rec.Data[key]); v != "" {
+			if key == "url" {
+				if m := anyToString(rec.Data["method"]); m != "" {
+					v = m + " " + v
+				}
+			}
+			return v
+		}
+	}
+	return rec.Type
+}
+
+func statusIsErr(status string) bool {
+	switch {
+	case len(status) == 3 && status[0] == '5':
+		return true
+	case status == "failed" || status == "unhandled" || status == "error" ||
+		status == "critical" || status == "emergency" || status == "alert":
+		return true
+	}
+	return false
+}
+
 func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	trace := r.PathValue("trace")
 	records, err := s.store.List(r.Context(), store.ListFilter{TraceID: trace, Limit: 500})
@@ -492,8 +546,80 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 		records[i], records[j] = records[j], records[i]
 	}
+
+	var rows []wfRow
+	var spanUS int64
+	if len(records) > 0 {
+		start := records[0].TS
+		end := start
+		for _, rec := range records {
+			if rec.TS.Before(start) {
+				start = rec.TS
+			}
+			if e := rec.TS.Add(time.Duration(rec.Duration) * time.Microsecond); e.After(end) {
+				end = e
+			}
+		}
+		spanUS = end.Sub(start).Microseconds()
+		if spanUS <= 0 {
+			spanUS = 1000 // degenerate trace: avoid dividing by zero
+		}
+		for _, rec := range records {
+			row := wfRow{
+				Rec:       rec,
+				Label:     trunc(recordSummary(rec), 70),
+				OffsetPct: float64(rec.TS.Sub(start).Microseconds()) / float64(spanUS) * 100,
+				WidthPct:  float64(rec.Duration) / float64(spanUS) * 100,
+				Class:     wfClasses[rec.Type],
+				Err:       statusIsErr(rec.Status),
+				Marker:    rec.Duration == 0,
+			}
+			if row.Class == "" {
+				row.Class = "wf-log"
+			}
+			if !row.Marker && row.WidthPct < 0.5 {
+				row.WidthPct = 0.5 // keep short spans visible
+			}
+			if row.OffsetPct > 99.5 {
+				row.OffsetPct = 99.5
+			}
+			row.EndPct = row.OffsetPct + row.WidthPct
+			if row.EndPct > 85 {
+				row.EndPct = 85 // keep the duration label inside the track
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	// Time-axis tick labels at 0/25/50/75/100% of the span.
+	type tick struct {
+		Label string
+		Left  int
+	}
+	var ticks []tick
+	for i := 0; i <= 4; i++ {
+		us := float64(spanUS) * float64(i) / 4
+		var label string
+		switch {
+		case us >= 1e6:
+			label = fmt.Sprintf("%.2fs", us/1e6)
+		case us >= 1e3:
+			label = fmt.Sprintf("%.1fms", us/1e3)
+		default:
+			label = fmt.Sprintf("%.0fµs", us)
+		}
+		ticks = append(ticks, tick{Label: label, Left: i * 25})
+	}
+
 	base, _ := s.base(r, "")
-	s.render(w, "trace.html", map[string]any{"Base": base, "Trace": trace, "Records": records})
+	s.render(w, "trace.html", map[string]any{
+		"Base":    base,
+		"Trace":   trace,
+		"Records": records,
+		"Rows":    rows,
+		"SpanUS":  spanUS,
+		"Ticks":   ticks,
+	})
 }
 
 func httpError(w http.ResponseWriter, log *slog.Logger, err error) {

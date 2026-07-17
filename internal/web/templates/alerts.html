@@ -11,6 +11,12 @@
       <label>Name
         <input type="text" name="name" placeholder="Too many 5xx errors" required>
       </label>
+      <label>Condition
+        <select name="kind" id="alert-kind">
+          <option value="threshold">record count threshold</option>
+          <option value="new-exception">new exception appears</option>
+        </select>
+      </label>
       {{if .Apps}}
       <label>App
         <select name="app">
@@ -19,20 +25,20 @@
         </select>
       </label>
       {{end}}
-      <label>Record type
+      <label class="threshold-only">Record type
         <select name="record_type">
           <option value="">any</option>
           {{range .Types}}<option value="{{.Type}}">{{.Title}}</option>{{end}}
         </select>
       </label>
-      <label>Severity
+      <label class="threshold-only">Severity
         <select name="status_class">
           <option value="err">errors only</option>
           <option value="warn">warnings only</option>
           <option value="">any record</option>
         </select>
       </label>
-      <label>Threshold (≥)
+      <label class="threshold-only">Threshold (≥)
         <input type="number" name="threshold" value="5" min="1">
       </label>
       <label>Window (min)
@@ -69,8 +75,12 @@
     <tr {{if not .Enabled}}class="dim"{{end}}>
       <td><strong>{{.Name}}</strong></td>
       <td class="mono small">
+        {{if eq .Kind "new-exception"}}
+        new exception in {{.WindowMinutes}}m
+        {{else}}
         ≥{{.Threshold}} {{if .StatusClass}}{{.StatusClass}}{{else}}any{{end}}
         {{if .RecordType}}{{.RecordType}}{{else}}record{{end}}(s) / {{.WindowMinutes}}m
+        {{end}}
         {{if .App}}<span class="pill">{{.App}}</span>{{end}}
         <span class="hint">cooldown {{.CooldownMinutes}}m</span>
       </td>
@@ -119,6 +129,16 @@ document.addEventListener('DOMContentLoaded', function () {
   if (fmt && tg) {
     const sync = () => { tg.hidden = fmt.value !== 'telegram'; };
     fmt.addEventListener('change', sync);
+    sync();
+  }
+  const kind = document.getElementById('alert-kind');
+  if (kind) {
+    const sync = () => {
+      document.querySelectorAll('.threshold-only').forEach((el) => {
+        el.hidden = kind.value !== 'threshold';
+      });
+    };
+    kind.addEventListener('change', sync);
     sync();
   }
 });

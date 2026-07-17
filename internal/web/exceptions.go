@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,14 +75,7 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	tab := q.Get("tab")
-	valid := false
-	for _, t := range exceptionTabs {
-		if t == tab {
-			valid = true
-			break
-		}
-	}
-	if !valid {
+	if !slices.Contains(exceptionTabs, tab) {
 		tab = "open"
 	}
 	statusFilter := tab

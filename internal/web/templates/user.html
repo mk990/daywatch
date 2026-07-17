@@ -1,0 +1,39 @@
+{{template "header" .Base}}
+
+<p class="breadcrumb"><a href="/users?range={{.Base.Range}}{{.Base.AppQS}}">← Users</a></p>
+
+<h1>{{icon "users"}} {{if .U.Name}}{{.U.Name}}{{else}}User #{{.U.UserID}}{{end}}</h1>
+{{if or .U.Username .U.Name}}<p class="exc-message">{{with .U.Username}}{{.}} · {{end}}id {{.U.UserID}}</p>{{end}}
+
+<div class="cards">
+  <div class="card stat"><span class="stat-num">{{.U.Events}}</span><span class="stat-label">events</span></div>
+  <div class="card stat"><span class="stat-num">{{.U.Requests}}</span><span class="stat-label">requests</span></div>
+  <div class="card stat"><span class="stat-num {{if .U.Errors}}stat-err{{end}}">{{.U.Errors}}</span><span class="stat-label">errors</span></div>
+  <div class="card stat"><span class="stat-num" title="{{timefmt .U.LastSeen}}">{{ago .U.LastSeen}}</span><span class="stat-label">last seen</span></div>
+</div>
+
+<div class="card">
+  <h2>Recent activity <span class="hint">latest 50 records</span></h2>
+  {{if .Rows}}
+  <table>
+    <thead><tr><th>When</th><th>Type</th><th>Summary</th><th>Status</th><th>Duration</th><th>Trace</th><th></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+    <tr>
+      <td title="{{timefmt .Rec.TS}}">{{ago .Rec.TS}}</td>
+      <td><span class="pill">{{.Rec.Type}}</span></td>
+      <td class="mono small">{{.Summary}}</td>
+      <td>{{if .Rec.Status}}<span class="badge {{if .Err}}err{{end}}">{{.Rec.Status}}</span>{{end}}</td>
+      <td>{{if .Rec.Duration}}{{ms .Rec.Duration}}{{end}}</td>
+      <td>{{template "tracelink" .Rec}}</td>
+      <td>{{template "recordlink" .Rec}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No records for this user.</p>
+  {{end}}
+</div>
+
+{{template "footer" .Base}}

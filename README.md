@@ -22,8 +22,15 @@ It captures and visualizes every record type the Nightwatch package emits:
 | `mail` / `notification` | Mail & notifications |
 | `user` | Seen users |
 
-Every record keeps its full raw payload (JSONB) and is linked by `trace_id`, so you can open
-a request and see all queries, cache events, logs, and exceptions that happened inside it.
+Every record keeps its full raw payload (JSONB) and is linked by `trace_id`: the trace page
+renders an APM-style **waterfall** — every query, cache event, outgoing request, and log
+positioned on the request's timeline, so gaps and slow spans are visible at a glance. A
+**Users** page aggregates per-user activity (requests, errors, last seen) with a per-user
+activity feed.
+
+Long-range charts (7d/30d) are served from **hourly rollups** maintained in the background,
+so they stay fast regardless of traffic volume and survive raw-record pruning
+(`DW_ROLLUP_DAYS`, default 90).
 
 ## How it works
 
@@ -128,8 +135,9 @@ occurrence counts, first/last seen, and **Open / Resolved / Ignored** tabs:
 The **Alerts** page lets you create threshold rules evaluated every 30 seconds against
 incoming records, e.g. *"≥5 error requests in 5 minutes"*:
 
-- **Condition**: record type (or any), severity class (errors / warnings / any), threshold
-  count, and sliding window.
+- **Condition**: either a *count threshold* — record type (or any), severity class
+  (errors / warnings / any), threshold count, sliding window — or *new exception appears*,
+  which fires when an exception group is seen for the very first time.
 - **Channel**: a webhook URL with a format — `json` (generic), `slack`, `discord`, or
   `telegram` (needs a chat ID; point the URL at `https://api.telegram.org/bot<TOKEN>/sendMessage`).
 - **Cooldown** silences a rule after it fires so a sustained incident doesn't spam you.
@@ -148,6 +156,40 @@ derived deterministically from the credentials so sessions survive restarts; set
 credentials empty runs the panel without a login (a warning is logged). The TCP ingest
 port is unaffected — it authenticates via the Nightwatch token hash as always.
 
+## Running in production
+
+Put the panel behind a TLS-terminating reverse proxy and forward the protocol header —
+the session cookie gets its `Secure` flag automatically when the request arrives over
+HTTPS (`X-Forwarded-Proto: https`):
+
+```caddy
+daywatch.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name daywatch.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header X-Forwarded-Proto https;
+        # live updates use SSE:
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+The TCP ingest port (2407) is app-to-Daywatch traffic authenticated by token hash; expose
+it to your app servers only (private network / firewall), not the public internet.
+
+Login attempts are rate-limited per IP (5 failures / 15 minutes → temporary lockout) on
+top of a constant-time credential check. Note that app ingest tokens are stored in
+Postgres in plain text (the panel shows them for copy/paste), so protect the database
+accordingly.
+
 ## Configuration
 
 All settings are environment variables (see `.env.example` for the compose-level ones):
@@ -163,6 +205,7 @@ All settings are environment variables (see `.env.example` for the compose-level
 | `DW_INGEST_ADDR` | `:2407` | TCP ingest bind address |
 | `DW_HTTP_ADDR` | `:8080` | Web panel bind address |
 | `DW_RETENTION_DAYS` | `14` | Prune records older than N days (0 = keep forever) |
+| `DW_ROLLUP_DAYS` | `90` | Keep hourly chart rollups for N days (0 = forever) |
 | `DW_INGEST_PORT` / `DW_HTTP_PORT` | `2407` / `8080` | Host ports published by docker compose |
 
 ## Development

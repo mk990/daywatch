@@ -61,6 +61,7 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 	rule := store.AlertRule{
 		Name:            strings.TrimSpace(r.PostFormValue("name")),
 		Enabled:         true,
+		Kind:            r.PostFormValue("kind"),
 		App:             r.PostFormValue("app"),
 		RecordType:      r.PostFormValue("record_type"),
 		StatusClass:     r.PostFormValue("status_class"),
@@ -70,6 +71,14 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 		ChannelURL:      strings.TrimSpace(r.PostFormValue("channel_url")),
 		ChannelFormat:   r.PostFormValue("channel_format"),
 		TelegramChatID:  strings.TrimSpace(r.PostFormValue("telegram_chat_id")),
+	}
+
+	// New-exception rules fire on any new group; the threshold/type/class
+	// fields don't apply.
+	if rule.Kind == "new-exception" {
+		rule.Threshold = 1
+		rule.RecordType = "exception"
+		rule.StatusClass = ""
 	}
 
 	if rule.App != "" {
@@ -97,6 +106,11 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 func validateRule(r store.AlertRule) string {
 	if r.Name == "" {
 		return "name is required"
+	}
+	switch r.Kind {
+	case "", "threshold", "new-exception":
+	default:
+		return "invalid rule kind"
 	}
 	u, err := url.Parse(r.ChannelURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

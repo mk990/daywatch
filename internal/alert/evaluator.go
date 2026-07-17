@@ -119,19 +119,25 @@ func (e *Evaluator) Fire(ctx context.Context, r store.AlertRule, matched int64, 
 }
 
 func (e *Evaluator) message(r store.AlertRule, matched int64, test bool) string {
-	what := r.RecordType
-	if what == "" {
-		what = "event"
+	var msg string
+	if r.Kind == "new-exception" {
+		msg = fmt.Sprintf("🚨 Daywatch alert: %s — %d new exception type(s) first seen in the last %dm",
+			r.Name, matched, r.WindowMinutes)
+	} else {
+		what := r.RecordType
+		if what == "" {
+			what = "event"
+		}
+		class := ""
+		switch r.StatusClass {
+		case "err":
+			class = "error "
+		case "warn":
+			class = "warning "
+		}
+		msg = fmt.Sprintf("🚨 Daywatch alert: %s — %d %s%s record(s) in the last %dm (threshold %d)",
+			r.Name, matched, class, what, r.WindowMinutes, r.Threshold)
 	}
-	class := ""
-	switch r.StatusClass {
-	case "err":
-		class = "error "
-	case "warn":
-		class = "warning "
-	}
-	msg := fmt.Sprintf("🚨 Daywatch alert: %s — %d %s%s record(s) in the last %dm (threshold %d)",
-		r.Name, matched, class, what, r.WindowMinutes, r.Threshold)
 	if r.App != "" {
 		msg += " [app: " + r.App + "]"
 	}
