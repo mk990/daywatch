@@ -83,6 +83,22 @@ LOG_STACK=single,nightwatch
 > `NIGHTWATCH_TOKEN` is unset on the Daywatch side, any token is accepted (fine for local
 > dev; don't do it in production).
 
+## Alerting
+
+The **Alerts** page lets you create threshold rules evaluated every 30 seconds against
+incoming records, e.g. *"≥5 error requests in 5 minutes"*:
+
+- **Condition**: record type (or any), severity class (errors / warnings / any), threshold
+  count, and sliding window.
+- **Channel**: a webhook URL with a format — `json` (generic), `slack`, `discord`, or
+  `telegram` (needs a chat ID; point the URL at `https://api.telegram.org/bot<TOKEN>/sendMessage`).
+- **Cooldown** silences a rule after it fires so a sustained incident doesn't spam you.
+- Every firing is recorded in the history table with its delivery status; a **test** button
+  sends a `[TEST]` notification immediately to verify the wiring.
+
+Set `DW_BASE_URL` (e.g. `https://daywatch.example.com`) to include a panel link in
+notifications.
+
 ## Panel authentication
 
 Set `DAYWATCH_USERNAME` and `DAYWATCH_PASSWORD` to put the panel behind a login. Sessions
@@ -102,6 +118,7 @@ All settings are environment variables (see `.env.example` for the compose-level
 | `NIGHTWATCH_TOKEN` | empty | Shared secret; empty accepts any token |
 | `DAYWATCH_USERNAME` / `DAYWATCH_PASSWORD` | empty | Panel login; both empty disables auth |
 | `DW_JWT_SECRET` | derived | Explicit JWT signing secret |
+| `DW_BASE_URL` | empty | Public panel URL included in alert notifications |
 | `DW_INGEST_ADDR` | `:2407` | TCP ingest bind address |
 | `DW_HTTP_ADDR` | `:8080` | Web panel bind address |
 | `DW_RETENTION_DAYS` | `14` | Prune records older than N days (0 = keep forever) |
