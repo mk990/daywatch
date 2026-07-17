@@ -1,0 +1,128 @@
+{{template "header" .Base}}
+
+<h1>Dashboard</h1>
+
+<div class="cards">
+  <div class="card stat"><span class="stat-num">{{.Total}}</span><span class="stat-label">events</span></div>
+  <div class="card stat"><span class="stat-num">{{index .Counts "request"}}</span><span class="stat-label">requests</span></div>
+  <div class="card stat"><span class="stat-num">{{index .Counts "query"}}</span><span class="stat-label">queries</span></div>
+  <div class="card stat"><span class="stat-num">{{index .Counts "exception"}}</span><span class="stat-label">exceptions</span></div>
+  <div class="card stat"><span class="stat-num">{{index .Counts "job-attempt"}}</span><span class="stat-label">job attempts</span></div>
+  <div class="card stat"><span class="stat-num">{{index .Counts "log"}}</span><span class="stat-label">logs</span></div>
+</div>
+
+<div class="card">
+  <h2>Request volume</h2>
+  <canvas id="timeline" height="120"></canvas>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Top routes</h2>
+    {{if .Routes}}
+    <table>
+      <thead><tr><th>Route</th><th>Hits</th><th>Avg</th><th>P95</th><th>5xx</th></tr></thead>
+      <tbody>
+      {{range .Routes}}
+      <tr>
+        <td><a href="/section/requests?group={{.Group}}&range={{$.Base.Range}}" class="mono">{{.Label}}</a></td>
+        <td>{{.Count}}</td>
+        <td>{{ms .AvgMs}}</td>
+        <td>{{ms .P95Ms}}</td>
+        <td>{{if .Errors}}<span class="badge err">{{.Errors}}</span>{{else}}0{{end}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No requests yet.</p>{{end}}
+  </div>
+
+  <div class="card">
+    <h2>Top exceptions</h2>
+    {{if .Exceptions}}
+    <table>
+      <thead><tr><th>Exception</th><th>Count</th><th>Last seen</th></tr></thead>
+      <tbody>
+      {{range .Exceptions}}
+      <tr>
+        <td><a href="/section/exceptions?group={{.Group}}&range={{$.Base.Range}}" class="mono">{{printf "%.90s" .Label}}</a></td>
+        <td>{{.Count}}</td>
+        <td>{{ago .LastSeen}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No exceptions. 🎉</p>{{end}}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Slowest / most frequent queries</h2>
+    {{if .SlowQueries}}
+    <table>
+      <thead><tr><th>SQL</th><th>Count</th><th>Avg</th><th>Max</th></tr></thead>
+      <tbody>
+      {{range .SlowQueries}}
+      <tr>
+        <td><a href="/section/queries?group={{.Group}}&range={{$.Base.Range}}" class="mono">{{printf "%.90s" .Label}}</a></td>
+        <td>{{.Count}}</td>
+        <td>{{ms .AvgMs}}</td>
+        <td>{{ms .MaxMs}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No queries yet.</p>{{end}}
+  </div>
+
+  <div class="card">
+    <h2>Latest events</h2>
+    {{if .Recent}}
+    <table>
+      <thead><tr><th>Type</th><th>Summary</th><th>When</th><th></th></tr></thead>
+      <tbody>
+      {{range .Recent}}
+      <tr>
+        <td><span class="pill">{{.Type}}</span></td>
+        <td class="mono small">
+          {{with index .Data "url"}}{{printf "%.60s" .}}{{else}}{{with index .Data "sql"}}{{printf "%.60s" .}}{{else}}{{with index .Data "message"}}{{printf "%.60s" .}}{{else}}{{with index .Data "name"}}{{printf "%.60s" .}}{{else}}{{with index .Data "class"}}{{printf "%.60s" .}}{{end}}{{end}}{{end}}{{end}}{{end}}
+        </td>
+        <td>{{ago .TS}}</td>
+        <td>{{template "recordlink" .}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">Nothing ingested yet. Point your Laravel app's <code>NIGHTWATCH_INGEST_URI</code> at this server.</p>{{end}}
+  </div>
+</div>
+
+<script>
+(function () {
+  const data = {{.Timeline}};
+  const canvas = document.getElementById('timeline');
+  if (!canvas || !data.length) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.parentElement.clientWidth - 32;
+  const H = canvas.height;
+  const pad = 24;
+  const max = Math.max(...data.map(p => p.c), 1);
+  const bw = Math.max(1, (W - pad * 2) / data.length - 2);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#e8a33d';
+  data.forEach((p, i) => {
+    const h = (p.c / max) * (H - pad * 2);
+    const x = pad + i * ((W - pad * 2) / data.length);
+    ctx.fillRect(x, H - pad - h, bw, h);
+  });
+  ctx.fillStyle = getComputedStyle(document.body).color;
+  ctx.font = '11px sans-serif';
+  ctx.fillText(data[0].t, pad, H - 6);
+  const last = data[data.length - 1].t;
+  ctx.fillText(last, W - pad - ctx.measureText(last).width, H - 6);
+  ctx.fillText('max ' + max, pad, 14);
+  canvas.title = 'Requests per bucket';
+})();
+</script>
+
+{{template "footer" .Base}}

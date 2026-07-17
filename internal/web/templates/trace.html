@@ -1,0 +1,29 @@
+{{template "header" .Base}}
+
+<h1>Trace <span class="mono">{{.Trace}}</span></h1>
+
+<div class="card">
+  {{if .Records}}
+  <table>
+    <thead><tr><th>When</th><th>Type</th><th>Summary</th><th>Duration</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {{range .Records}}
+    <tr>
+      <td title="{{timefmt .TS}}">{{ago .TS}}</td>
+      <td><span class="pill">{{.Type}}</span></td>
+      <td class="mono small">
+        {{with index .Data "url"}}{{printf "%.80s" .}}{{else}}{{with index .Data "sql"}}{{printf "%.80s" .}}{{else}}{{with index .Data "message"}}{{printf "%.80s" .}}{{else}}{{with index .Data "name"}}{{printf "%.80s" .}}{{else}}{{with index .Data "class"}}{{printf "%.80s" .}}{{else}}{{with index .Data "key"}}{{printf "%.80s" .}}{{end}}{{end}}{{end}}{{end}}{{end}}{{end}}
+      </td>
+      <td>{{if .Duration}}{{ms .Duration}}{{end}}</td>
+      <td>{{.Status}}</td>
+      <td>{{template "recordlink" .}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No records found for this trace.</p>
+  {{end}}
+</div>
+
+{{template "footer" .Base}}

@@ -1,0 +1,43 @@
+{{define "header"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daywatch</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌞</text></svg>">
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <a class="brand" href="/">🌞 Daywatch</a>
+  <nav>
+    <a href="/?range={{.Range}}" class="{{if eq .ActiveSlug ""}}active{{end}}">📊 Dashboard</a>
+    {{$base := .}}
+    {{range .Sections}}
+    <a href="/section/{{.Slug}}?range={{$base.Range}}" class="{{if eq $base.ActiveSlug .Slug}}active{{end}}">{{.Icon}} {{.Title}}</a>
+    {{end}}
+  </nav>
+</aside>
+<main class="content">
+<div class="topbar">
+  <span class="range-label">Showing: {{.RangeLabel}}</span>
+  <div class="range-picker">
+    <a href="?range=1h{{with .QueryString}}&{{.}}{{end}}" class="{{if eq .Range "1h"}}active{{end}}">1h</a>
+    <a href="?range=24h{{with .QueryString}}&{{.}}{{end}}" class="{{if eq .Range "24h"}}active{{end}}">24h</a>
+    <a href="?range=7d{{with .QueryString}}&{{.}}{{end}}" class="{{if eq .Range "7d"}}active{{end}}">7d</a>
+    <a href="?range=30d{{with .QueryString}}&{{.}}{{end}}" class="{{if eq .Range "30d"}}active{{end}}">30d</a>
+  </div>
+</div>
+{{end}}
+
+{{define "footer"}}
+</main>
+</div>
+</body>
+</html>
+{{end}}
+
+{{define "recordlink"}}<a class="mono small" href="/record/{{.ID}}">#{{.ID}}</a>{{end}}
+
+{{define "tracelink"}}{{if .TraceID}}<a class="mono small" href="/trace/{{.TraceID}}" title="{{.TraceID}}">{{printf "%.8s" .TraceID}}…</a>{{end}}{{end}}

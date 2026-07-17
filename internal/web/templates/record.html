@@ -1,0 +1,23 @@
+{{template "header" .Base}}
+
+<h1>Record #{{.Record.ID}} <span class="pill">{{.Record.Type}}</span></h1>
+
+<div class="card">
+  <table class="kv">
+    <tr><th>Timestamp</th><td>{{timefmt .Record.TS}} ({{ago .Record.TS}})</td></tr>
+    {{if .Record.TraceID}}<tr><th>Trace</th><td><a href="/trace/{{.Record.TraceID}}" class="mono">{{.Record.TraceID}}</a></td></tr>{{end}}
+    {{if .Record.UserID}}<tr><th>User</th><td>{{.Record.UserID}}</td></tr>{{end}}
+    {{if .Record.Server}}<tr><th>Server</th><td>{{.Record.Server}}</td></tr>{{end}}
+    {{if .Record.Deploy}}<tr><th>Deploy</th><td class="mono">{{.Record.Deploy}}</td></tr>{{end}}
+    {{if .Record.Stage}}<tr><th>Stage</th><td>{{.Record.Stage}}</td></tr>{{end}}
+    {{if .Record.Status}}<tr><th>Status</th><td>{{.Record.Status}}</td></tr>{{end}}
+    {{if .Record.Duration}}<tr><th>Duration</th><td>{{ms .Record.Duration}}</td></tr>{{end}}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Payload</h2>
+  <pre class="payload">{{json .Record.Data}}</pre>
+</div>
+
+{{template "footer" .Base}}

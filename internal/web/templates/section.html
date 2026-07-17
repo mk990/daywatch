@@ -1,0 +1,68 @@
+{{template "header" .Base}}
+
+<h1>{{.Section.Icon}} {{.Section.Title}} <span class="count">({{.Count}})</span></h1>
+
+{{if .Groups}}
+<div class="card">
+  <h2>{{.Section.GroupTitle}}</h2>
+  <table>
+    <thead><tr><th>&nbsp;</th><th>Count</th><th>Avg</th><th>Max</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {{range .Groups}}
+    <tr>
+      <td><a class="mono" href="/section/{{$.Section.Slug}}?group={{.Group}}&range={{$.Base.Range}}">{{printf "%.110s" .Label}}</a></td>
+      <td>{{.Count}}</td>
+      <td>{{ms .AvgMs}}</td>
+      <td>{{ms .MaxMs}}</td>
+      <td>{{ago .LastSeen}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+<div class="card">
+  <form method="get" class="filters">
+    <input type="hidden" name="range" value="{{.Base.Range}}">
+    {{if .GroupParam}}<input type="hidden" name="group" value="{{.GroupParam}}">{{end}}
+    <input type="search" name="search" placeholder="Search payload…" value="{{.Search}}">
+    {{if .Section.StatusLabel}}<input type="text" name="status" placeholder="{{.Section.StatusLabel}}" value="{{.Status}}" class="short">{{end}}
+    <button type="submit">Filter</button>
+    {{if or .Search .Status .GroupParam}}<a href="/section/{{.Section.Slug}}?range={{.Base.Range}}" class="clear">✕ clear</a>{{end}}
+  </form>
+
+  {{if .Records}}
+  <table>
+    <thead>
+      <tr>
+        <th>When</th>
+        {{range .Section.Columns}}<th>{{.Header}}</th>{{end}}
+        <th>Trace</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {{$sec := .Section}}
+    {{range .Records}}
+      <tr>
+        <td title="{{timefmt .TS}}">{{ago .TS}}</td>
+        {{$rec := .}}
+        {{range $sec.Columns}}<td class="mono small">{{call .Value $rec}}</td>{{end}}
+        <td>{{template "tracelink" .}}</td>
+        <td>{{template "recordlink" .}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <div class="pagination">
+    {{if .HasPrev}}<a href="?{{.Base.QueryString}}&page={{sub .Page 1}}">← Prev</a>{{end}}
+    <span>Page {{.Page}}</span>
+    {{if .HasNext}}<a href="?{{.Base.QueryString}}&page={{add .Page 1}}">Next →</a>{{end}}
+  </div>
+  {{else}}
+  <p class="empty">No {{.Section.Title}} in this time range.</p>
+  {{end}}
+</div>
+
+{{template "footer" .Base}}
