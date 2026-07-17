@@ -49,9 +49,9 @@ type Column struct {
 }
 
 type Server struct {
-	store    *store.Store
-	log      *slog.Logger
-	tmpl     *template.Template
+	store       *store.Store
+	log         *slog.Logger
+	tmpl        *template.Template
 	sections    []Section
 	bySlug      map[string]*Section
 	hub         *Hub
