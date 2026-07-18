@@ -49,7 +49,7 @@ to it directly. **You do not run `php artisan nightwatch:agent` at all.**
 ## Quick start (Docker)
 
 ```bash
-cp .env.example .env          # set NIGHTWATCH_TOKEN, DAYWATCH_USERNAME, DAYWATCH_PASSWORD
+cp .env.example .env          # set DAYWATCH_USERNAME, DAYWATCH_PASSWORD
 docker compose up -d --build
 ```
 
@@ -64,15 +64,20 @@ Install the official package in your Laravel project (Laravel 10+, PHP 8.2+):
 composer require laravel/nightwatch
 ```
 
-Then point it at Daywatch in your app's `.env`:
+Then create an app on Daywatch's **Apps** page (**Create app + token**) and point your
+Laravel `.env` at Daywatch with the generated token:
 
 ```dotenv
-NIGHTWATCH_TOKEN=the-same-secret-you-set-for-daywatch
+NIGHTWATCH_TOKEN=token-from-the-apps-page
 NIGHTWATCH_INGEST_URI=daywatch-host:2407
 ```
 
+(Alternatively, setting `NIGHTWATCH_TOKEN` on the Daywatch side before first boot seeds an
+app named `default` with that token — see [Multiple apps](#multiple-apps).)
+
 - Same Docker network: `NIGHTWATCH_INGEST_URI=daywatch:2407`
-- Laravel in Docker, Daywatch on host: `NIGHTWATCH_INGEST_URI=host.docker.internal:2407`
+- Laravel in Docker, Daywatch on the same host: `NIGHTWATCH_INGEST_URI=host.docker.internal:2407`
+- Daywatch on another machine: `NIGHTWATCH_INGEST_URI=<hostname-or-lan-ip>:2407`
 - Same machine, no Docker: `NIGHTWATCH_INGEST_URI=127.0.0.1:2407`
 
 Hit a few routes in your app and open the Daywatch panel. That's it.
