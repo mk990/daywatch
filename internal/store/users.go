@@ -19,7 +19,7 @@ type UserStat struct {
 
 // UserStats lists the most recently active users in the window, with
 // identity fields taken from each user's latest "user" record.
-func (s *Store) UserStats(ctx context.Context, app string, since time.Time, limit int) ([]UserStat, error) {
+func (s *Store) UserStats(ctx context.Context, app, stage string, since time.Time, limit int) ([]UserStat, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -32,7 +32,7 @@ func (s *Store) UserStats(ctx context.Context, app string, since time.Time, limi
 			       count(*) FILTER (WHERE %s = 'err') AS errors,
 			       max(ts) AS last_seen
 			FROM records
-			WHERE user_id <> '' AND ts >= $1 AND ($2 = '' OR app = $2)
+			WHERE user_id <> '' AND ts >= $1 AND ($2 = '' OR app = $2) AND ($4 = '' OR stage = $4)
 			GROUP BY user_id
 		) r
 		LEFT JOIN LATERAL (
@@ -43,7 +43,7 @@ func (s *Store) UserStats(ctx context.Context, app string, since time.Time, limi
 		) u ON true
 		ORDER BY r.last_seen DESC
 		LIMIT $3`, statusClassSQL)
-	rows, err := s.pool.Query(ctx, q, since, app, limit)
+	rows, err := s.pool.Query(ctx, q, since, app, limit, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s *Store) UserStats(ctx context.Context, app string, since time.Time, limi
 }
 
 // GetUserStat returns one user's all-time (within retention) activity.
-func (s *Store) GetUserStat(ctx context.Context, app, userID string) (*UserStat, error) {
+func (s *Store) GetUserStat(ctx context.Context, app, stage, userID string) (*UserStat, error) {
 	q := fmt.Sprintf(`
 		SELECT r.user_id, coalesce(u.name, ''), coalesce(u.username, ''),
 		       r.events, r.requests, r.errors, r.last_seen
@@ -71,7 +71,7 @@ func (s *Store) GetUserStat(ctx context.Context, app, userID string) (*UserStat,
 			       count(*) FILTER (WHERE %s = 'err') AS errors,
 			       max(ts) AS last_seen
 			FROM records
-			WHERE user_id = $1 AND ($2 = '' OR app = $2)
+			WHERE user_id = $1 AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
 			GROUP BY user_id
 		) r
 		LEFT JOIN LATERAL (
@@ -81,7 +81,7 @@ func (s *Store) GetUserStat(ctx context.Context, app, userID string) (*UserStat,
 			ORDER BY ts DESC LIMIT 1
 		) u ON true`, statusClassSQL)
 	var u UserStat
-	err := s.pool.QueryRow(ctx, q, userID, app).Scan(&u.UserID, &u.Name, &u.Username,
+	err := s.pool.QueryRow(ctx, q, userID, app, stage).Scan(&u.UserID, &u.Name, &u.Username,
 		&u.Events, &u.Requests, &u.Errors, &u.LastSeen)
 	if err != nil {
 		return nil, err

@@ -11,6 +11,7 @@ import (
 // ListFilter narrows record listings.
 type ListFilter struct {
 	App     string
+	Stage   string
 	Type    string
 	TraceID string
 	Group   string
@@ -34,6 +35,9 @@ func (f ListFilter) where() (string, []any) {
 	}
 	if f.App != "" {
 		add("app = $%d", f.App)
+	}
+	if f.Stage != "" {
+		add("stage = $%d", f.Stage)
 	}
 	if f.Type != "" {
 		add("type = $%d", f.Type)
@@ -126,11 +130,11 @@ type TypeCount struct {
 	Count int64
 }
 
-func (s *Store) CountsByType(ctx context.Context, app string, since time.Time) ([]TypeCount, error) {
+func (s *Store) CountsByType(ctx context.Context, app, stage string, since time.Time) ([]TypeCount, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT type, count(*) FROM records
-		 WHERE ts >= $1 AND ($2 = '' OR app = $2)
-		 GROUP BY type ORDER BY count(*) DESC`, since, app)
+		 WHERE ts >= $1 AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
+		 GROUP BY type ORDER BY count(*) DESC`, since, app, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +162,7 @@ type RouteStat struct {
 	LastSeen time.Time
 }
 
-func (s *Store) RequestStats(ctx context.Context, app string, since time.Time, limit int) ([]RouteStat, error) {
+func (s *Store) RequestStats(ctx context.Context, app, stage string, since time.Time, limit int) ([]RouteStat, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT group_hash,
 		       max(concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))) AS label,
@@ -169,10 +173,10 @@ func (s *Store) RequestStats(ctx context.Context, app string, since time.Time, l
 		       count(*) FILTER (WHERE status >= '500' AND status < '600' AND length(status) = 3),
 		       max(ts)
 		FROM records
-		WHERE type = 'request' AND ts >= $1 AND ($3 = '' OR app = $3)
+		WHERE type = 'request' AND ts >= $1 AND ($3 = '' OR app = $3) AND ($4 = '' OR stage = $4)
 		GROUP BY group_hash
 		ORDER BY count(*) DESC
-		LIMIT $2`, since, limit, app)
+		LIMIT $2`, since, limit, app, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +204,7 @@ type GroupStat struct {
 
 // GroupStats aggregates per group_hash. orderBy picks the ranking:
 // "count" (most frequent), "avg" or "max" (slowest), "total" (most time overall).
-func (s *Store) GroupStats(ctx context.Context, app, typ, labelExpr, orderBy string, since time.Time, limit int) ([]GroupStat, error) {
+func (s *Store) GroupStats(ctx context.Context, app, stage, typ, labelExpr, orderBy string, since time.Time, limit int) ([]GroupStat, error) {
 	orderExpr := map[string]string{
 		"count": "count(*)",
 		"avg":   "avg(duration)",
@@ -213,11 +217,11 @@ func (s *Store) GroupStats(ctx context.Context, app, typ, labelExpr, orderBy str
 	q := fmt.Sprintf(`
 		SELECT group_hash, max(%s) AS label, count(*), avg(duration)::float8, max(duration), max(ts)
 		FROM records
-		WHERE type = $1 AND ts >= $2 AND group_hash <> '' AND ($4 = '' OR app = $4)
+		WHERE type = $1 AND ts >= $2 AND group_hash <> '' AND ($4 = '' OR app = $4) AND ($5 = '' OR stage = $5)
 		GROUP BY group_hash
 		ORDER BY %s DESC
 		LIMIT $3`, labelExpr, orderExpr)
-	rows, err := s.pool.Query(ctx, q, typ, since, limit, app)
+	rows, err := s.pool.Query(ctx, q, typ, since, limit, app, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +233,32 @@ func (s *Store) GroupStats(ctx context.Context, app, typ, labelExpr, orderBy str
 			return nil, err
 		}
 		out = append(out, gs)
+	}
+	return out, rows.Err()
+}
+
+// StageNames returns the distinct execution stages (environments) seen so
+// far, alphabetically. Historical stages come from the small rollups table;
+// the current partial hour is checked live so a brand-new stage shows up
+// without waiting for the rollup ticker.
+func (s *Store) StageNames(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT stage FROM rollups_hourly WHERE stage <> ''
+		UNION
+		SELECT DISTINCT stage FROM records
+		WHERE ts >= date_trunc('hour', now()) AND stage <> ''
+		ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var st string
+		if err := rows.Scan(&st); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
 	}
 	return out, rows.Err()
 }
@@ -256,8 +286,8 @@ type ClassBucket struct {
 
 // TimelineByClass returns a gap-free series of buckets from since until
 // `until` (or now when zero), with counts split by status class.
-// typ = "" aggregates all record types; app = "" aggregates all apps.
-func (s *Store) TimelineByClass(ctx context.Context, app, typ string, since, until time.Time, bucketMinutes int) ([]ClassBucket, error) {
+// typ = "" aggregates all record types; app/stage = "" aggregate everything.
+func (s *Store) TimelineByClass(ctx context.Context, app, stage, typ string, since, until time.Time, bucketMinutes int) ([]ClassBucket, error) {
 	origin := since.Truncate(time.Minute)
 	end := time.Now()
 	if !until.IsZero() {
@@ -266,7 +296,7 @@ func (s *Store) TimelineByClass(ctx context.Context, app, typ string, since, unt
 	// Hour-or-larger buckets are served from pre-aggregated hourly rollups,
 	// which stay fast on long ranges and outlive raw-record pruning.
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		return s.timelineFromRollups(ctx, app, typ, since.Truncate(time.Hour), end, bucketMinutes)
+		return s.timelineFromRollups(ctx, app, stage, typ, since.Truncate(time.Hour), end, bucketMinutes)
 	}
 	q := fmt.Sprintf(`
 		SELECT date_bin($3::interval, ts, $2) AS bucket,
@@ -278,10 +308,10 @@ func (s *Store) TimelineByClass(ctx context.Context, app, typ string, since, unt
 		       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration), 0)::float8,
 		       coalesce(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration), 0)::float8
 		FROM records
-		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1) AND ($5 = '' OR app = $5)
+		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1) AND ($5 = '' OR app = $5) AND ($6 = '' OR stage = $6)
 		GROUP BY bucket
 		ORDER BY bucket`, statusClassSQL)
-	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes), end, app)
+	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes), end, app, stage)
 	if err != nil {
 		return nil, err
 	}

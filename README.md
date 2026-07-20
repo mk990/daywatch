@@ -115,6 +115,15 @@ An **app switcher** in the top bar (All apps | shop | blog | …) scopes every d
 chart, section, and exception view to the selected app, and alert rules can target one
 app or all of them.
 
+## Environments
+
+A **stage switcher** appears next to the app switcher once records from more than one
+execution stage (the package's `NIGHTWATCH_STAGE` / `execution_stage`, e.g. `production`
+vs `staging`) have been seen. It scopes every view the same way the app switcher does,
+and combines with it — e.g. app `shop`, stage `production`. Hourly chart rollups are
+kept per stage, so long-range charts stay correct under the filter. Records ingested
+before this feature (or without a stage) only appear under "All stages".
+
 Env variables still work as a **first-boot seed**: `NIGHTWATCH_TOKEN` registers an app
 named `default`, and `DW_APPS=shop:token-a,blog:token-b` registers several. They are
 inserted only if the name is free — after that, the panel is the source of truth.

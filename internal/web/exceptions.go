@@ -99,12 +99,12 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	search := q.Get("search")
-	groups, err := s.store.ExceptionGroups(ctx, base.App, since, until, statusFilter, search, 50)
+	groups, err := s.store.ExceptionGroups(ctx, base.App, base.Stage, since, until, statusFilter, search, 50)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	tabCounts, err := s.store.ExceptionStatusCounts(ctx, base.App, since, until)
+	tabCounts, err := s.store.ExceptionStatusCounts(ctx, base.App, base.Stage, since, until)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -115,7 +115,7 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 		span = until.Sub(since)
 	}
 	bm := bucketMinutes(span)
-	timeline, err := s.store.TimelineByClass(ctx, base.App, "exception", since, until, bm)
+	timeline, err := s.store.TimelineByClass(ctx, base.App, base.Stage, "exception", since, until, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -155,7 +155,7 @@ func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	base, _ := s.base(r, "exceptions")
 
-	g, err := s.store.GetExceptionGroup(ctx, base.App, group)
+	g, err := s.store.GetExceptionGroup(ctx, base.App, base.Stage, group)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -175,7 +175,7 @@ func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	occurrences, err := s.store.List(ctx, store.ListFilter{App: base.App, Type: "exception", Group: group, Limit: 50})
+	occurrences, err := s.store.List(ctx, store.ListFilter{App: base.App, Stage: base.Stage, Type: "exception", Group: group, Limit: 50})
 	if err != nil {
 		httpError(w, s.log, err)
 		return

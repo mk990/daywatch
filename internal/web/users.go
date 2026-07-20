@@ -9,7 +9,7 @@ import (
 // handleUsers lists the most active users in the selected window.
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	base, since := s.base(r, "users")
-	users, err := s.store.UserStats(r.Context(), base.App, since, 50)
+	users, err := s.store.UserStats(r.Context(), base.App, base.Stage, since, 50)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -25,12 +25,12 @@ func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
 	base, _ := s.base(r, "users")
 
-	stat, err := s.store.GetUserStat(r.Context(), base.App, uid)
+	stat, err := s.store.GetUserStat(r.Context(), base.App, base.Stage, uid)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	records, err := s.store.List(r.Context(), store.ListFilter{App: base.App, UserID: uid, Limit: 50})
+	records, err := s.store.List(r.Context(), store.ListFilter{App: base.App, Stage: base.Stage, UserID: uid, Limit: 50})
 	if err != nil {
 		httpError(w, s.log, err)
 		return

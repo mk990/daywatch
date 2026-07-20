@@ -11,7 +11,7 @@
     {{range .Users}}
     <tr>
       <td>
-        <a href="/user/{{.UserID}}?range={{$.Base.Range}}{{$.Base.AppQS}}">
+        <a href="/user/{{.UserID}}?range={{$.Base.Range}}{{$.Base.ScopeQS}}">
           <strong>{{if .Name}}{{.Name}}{{else}}#{{.UserID}}{{end}}</strong>
         </a>
         <span class="hint">{{with .Username}}{{.}} · {{end}}id {{.UserID}}</span>

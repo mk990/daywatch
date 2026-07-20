@@ -42,17 +42,17 @@ type ExceptionGroup struct {
 
 // ExceptionGroups lists exception groups seen in [since, until), newest
 // first. status filters by triage state ("" = all); search matches the
-// class or message of the latest occurrence; app scopes to one app.
+// class or message of the latest occurrence; app/stage scope the listing.
 // FirstSeen is global (not clipped to the window) so triage age is accurate.
-func (s *Store) ExceptionGroups(ctx context.Context, app string, since, until time.Time, status, search string, limit int) ([]ExceptionGroup, error) {
+func (s *Store) ExceptionGroups(ctx context.Context, app, stage string, since, until time.Time, status, search string, limit int) ([]ExceptionGroup, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	end := "now()"
-	args := []any{since, app}
+	args := []any{since, app, stage}
 	if !until.IsZero() {
 		args = append(args, until)
-		end = "$3"
+		end = "$4"
 	}
 	q := fmt.Sprintf(`
 		SELECT g.group_hash,
@@ -70,7 +70,7 @@ func (s *Store) ExceptionGroups(ctx context.Context, app string, since, until ti
 			       max(ts) AS last_seen, max(id) AS last_id
 			FROM records
 			WHERE type = 'exception' AND group_hash <> '' AND ts >= $1 AND ts < %s
-			  AND ($2 = '' OR app = $2)
+			  AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
 			GROUP BY group_hash
 		) g
 		JOIN records r ON r.id = g.last_id
@@ -78,7 +78,7 @@ func (s *Store) ExceptionGroups(ctx context.Context, app string, since, until ti
 		CROSS JOIN LATERAL (
 			SELECT min(ts) AS first_seen FROM records
 			WHERE type = 'exception' AND group_hash = g.group_hash
-			  AND ($2 = '' OR app = $2)
+			  AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
 		) fs`, end)
 
 	if status != "" {
@@ -114,19 +114,19 @@ func (s *Store) ExceptionGroups(ctx context.Context, app string, since, until ti
 
 // ExceptionStatusCounts tallies groups per triage state within the window,
 // for the Open/Resolved/Ignored tab badges.
-func (s *Store) ExceptionStatusCounts(ctx context.Context, app string, since, until time.Time) (map[string]int64, error) {
+func (s *Store) ExceptionStatusCounts(ctx context.Context, app, stage string, since, until time.Time) (map[string]int64, error) {
 	end := "now()"
-	args := []any{since, app}
+	args := []any{since, app, stage}
 	if !until.IsZero() {
 		args = append(args, until)
-		end = "$3"
+		end = "$4"
 	}
 	q := fmt.Sprintf(`
 		SELECT coalesce(es.status, 'open'), count(*)
 		FROM (
 			SELECT DISTINCT group_hash FROM records
 			WHERE type = 'exception' AND group_hash <> '' AND ts >= $1 AND ts < %s
-			  AND ($2 = '' OR app = $2)
+			  AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
 		) g
 		LEFT JOIN exception_status es ON es.group_hash = g.group_hash
 		GROUP BY 1`, end)
@@ -148,8 +148,8 @@ func (s *Store) ExceptionStatusCounts(ctx context.Context, app string, since, un
 }
 
 // GetExceptionGroup returns one group's all-time (within retention) stats,
-// scoped to app when non-empty.
-func (s *Store) GetExceptionGroup(ctx context.Context, app, group string) (*ExceptionGroup, error) {
+// scoped to app/stage when non-empty.
+func (s *Store) GetExceptionGroup(ctx context.Context, app, stage, group string) (*ExceptionGroup, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT g.group_hash,
 		       coalesce(r.data->>'class', ''),
@@ -165,11 +165,11 @@ func (s *Store) GetExceptionGroup(ctx context.Context, app, group string) (*Exce
 			       count(*) FILTER (WHERE status = 'unhandled') AS unhandled,
 			       min(ts) AS first_seen, max(ts) AS last_seen, max(id) AS last_id
 			FROM records
-			WHERE type = 'exception' AND group_hash = $1 AND ($2 = '' OR app = $2)
+			WHERE type = 'exception' AND group_hash = $1 AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
 			GROUP BY group_hash
 		) g
 		JOIN records r ON r.id = g.last_id
-		LEFT JOIN exception_status es ON es.group_hash = g.group_hash`, group, app)
+		LEFT JOIN exception_status es ON es.group_hash = g.group_hash`, group, app, stage)
 	var g ExceptionGroup
 	if err := row.Scan(&g.Group, &g.Class, &g.Message, &g.File, &g.Line,
 		&g.Count, &g.Unhandled, &g.FirstSeen, &g.LastSeen, &g.Status, &g.StatusAt, &g.LastID); err != nil {

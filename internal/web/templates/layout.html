@@ -16,12 +16,12 @@
 <aside class="sidebar">
   <a class="brand" href="/">{{icon "sun"}} Daywatch</a>
   <nav>
-    <a href="/?range={{.Range}}{{.AppQS}}" class="{{if eq .ActiveSlug ""}}active{{end}}">{{icon "gauge"}} Dashboard</a>
+    <a href="/?range={{.Range}}{{.ScopeQS}}" class="{{if eq .ActiveSlug ""}}active{{end}}">{{icon "gauge"}} Dashboard</a>
     <a href="/apps" class="{{if eq .ActiveSlug "apps"}}active{{end}}">{{icon "grid"}} Apps</a>
-    <a href="/alerts?range={{.Range}}{{.AppQS}}" class="{{if eq .ActiveSlug "alerts"}}active{{end}}">{{icon "siren"}} Alerts</a>
+    <a href="/alerts?range={{.Range}}{{.ScopeQS}}" class="{{if eq .ActiveSlug "alerts"}}active{{end}}">{{icon "siren"}} Alerts</a>
     {{$base := .}}
     {{range .Sections}}
-    <a href="/section/{{.Slug}}?range={{$base.Range}}{{$base.AppQS}}" class="{{if eq $base.ActiveSlug .Slug}}active{{end}}">{{icon .Icon}} {{.Title}}</a>
+    <a href="/section/{{.Slug}}?range={{$base.Range}}{{$base.ScopeQS}}" class="{{if eq $base.ActiveSlug .Slug}}active{{end}}">{{icon .Icon}} {{.Title}}</a>
     {{end}}
   </nav>
   {{if .AuthEnabled}}
@@ -35,6 +35,12 @@
   <div class="app-picker">
     {{icon "layers"}}
     {{range .AppSwitch}}<a href="{{.URL}}" class="{{if .Active}}active{{end}}">{{.Label}}</a>{{end}}
+  </div>
+  {{end}}
+  {{if .StageSwitch}}
+  <div class="app-picker">
+    {{icon "globe"}}
+    {{range .StageSwitch}}<a href="{{.URL}}" class="{{if .Active}}active{{end}}">{{.Label}}</a>{{end}}
   </div>
   {{end}}
   <div class="range-picker">

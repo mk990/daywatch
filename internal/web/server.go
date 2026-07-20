@@ -159,7 +159,7 @@ func (s *Server) Handler() http.Handler {
 	return s.requireAuth(mux)
 }
 
-// appLink is one entry in the topbar app switcher.
+// appLink is one entry in a topbar switcher (apps or stages).
 type appLink struct {
 	Label  string
 	URL    string
@@ -172,14 +172,16 @@ type baseData struct {
 	ActiveSlug string
 	Range      string
 	RangeLabel string
-	// QueryString and AppQS are pre-encoded query fragments; template.URL
+	// QueryString and ScopeQS are pre-encoded query fragments; template.URL
 	// stops html/template from re-escaping the & and = when they are
 	// spliced into href attributes.
 	QueryString template.URL
 	AuthEnabled bool
 	App         string       // selected app filter ("" = all)
-	AppQS       template.URL // "&app=x" fragment for building links
+	Stage       string       // selected execution-stage filter ("" = all)
+	ScopeQS     template.URL // "&app=x&stage=y" fragment for building links
 	AppSwitch   []appLink    // topbar switcher; empty hides it
+	StageSwitch []appLink    // topbar stage switcher; empty hides it
 }
 
 func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
@@ -209,6 +211,17 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		app = want
 	}
 
+	// Stages are whatever the packages have reported (production, staging,
+	// …); the filter only accepts seen values so links stay canonical.
+	stages, err := s.store.StageNames(r.Context())
+	if err != nil {
+		s.log.Error("listing stages failed", "error", err)
+	}
+	stage := ""
+	if want := q.Get("stage"); want != "" && slices.Contains(stages, want) {
+		stage = want
+	}
+
 	b := baseData{
 		Sections:    s.sections,
 		ActiveSlug:  active,
@@ -216,31 +229,42 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		RangeLabel:  label,
 		AuthEnabled: s.auth.Enabled(),
 		App:         app,
+		Stage:       stage,
 	}
+	scope := url.Values{}
 	if app != "" {
-		b.AppQS = template.URL("&app=" + url.QueryEscape(app))
-		// Range-picker links append QueryString; keep the app by default.
-		// Handlers that set their own QueryString include the app param anyway.
-		b.QueryString = template.URL("app=" + url.QueryEscape(app))
+		scope.Set("app", app)
+	}
+	if stage != "" {
+		scope.Set("stage", stage)
+	}
+	if len(scope) > 0 {
+		b.ScopeQS = template.URL("&" + scope.Encode())
+		// Range-picker links append QueryString; keep the scope by default.
+		// Handlers that set their own QueryString include these params anyway.
+		b.QueryString = template.URL(scope.Encode())
 	}
 	if len(apps) > 1 {
-		b.AppSwitch = appSwitch(r, apps, app)
+		b.AppSwitch = scopeSwitch(r, "app", "All apps", apps, app)
+	}
+	if len(stages) > 1 {
+		b.StageSwitch = scopeSwitch(r, "stage", "All stages", stages, stage)
 	}
 	return b, since
 }
 
-// appSwitch builds "All | app1 | app2 …" links that preserve the current
-// page and query, swapping only the app parameter.
-func appSwitch(r *http.Request, apps []string, current string) []appLink {
-	linkTo := func(app string) string {
+// scopeSwitch builds "All | a | b …" links that preserve the current page
+// and query, swapping only the given scope parameter (app or stage).
+func scopeSwitch(r *http.Request, param, allLabel string, names []string, current string) []appLink {
+	linkTo := func(val string) string {
 		q := r.URL.Query()
-		q.Del("app")
-		// A different app means different data: drop drill windows and paging.
+		q.Del(param)
+		// A different scope means different data: drop drill windows and paging.
 		q.Del("from")
 		q.Del("to")
 		q.Del("page")
-		if app != "" {
-			q.Set("app", app)
+		if val != "" {
+			q.Set(param, val)
 		}
 		u := r.URL.Path
 		if enc := q.Encode(); enc != "" {
@@ -248,8 +272,8 @@ func appSwitch(r *http.Request, apps []string, current string) []appLink {
 		}
 		return u
 	}
-	links := []appLink{{Label: "All apps", URL: linkTo(""), Active: current == ""}}
-	for _, name := range apps {
+	links := []appLink{{Label: allLabel, URL: linkTo(""), Active: current == ""}}
+	for _, name := range names {
 		links = append(links, appLink{Label: name, URL: linkTo(name), Active: current == name})
 	}
 	return links
@@ -265,35 +289,35 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	base, since := s.base(r, "")
 	ctx := r.Context()
-	app := base.App
+	app, stage := base.App, base.Stage
 
-	counts, err := s.store.CountsByType(ctx, app, since)
+	counts, err := s.store.CountsByType(ctx, app, stage, since)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	routes, err := s.store.RequestStats(ctx, app, since, 15)
+	routes, err := s.store.RequestStats(ctx, app, stage, since, 15)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	slowQueries, err := s.store.GroupStats(ctx, app, "query", "data->>'sql'", "total", since, 10)
+	slowQueries, err := s.store.GroupStats(ctx, app, stage, "query", "data->>'sql'", "total", since, 10)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	exceptions, err := s.store.GroupStats(ctx, app, "exception", "concat(data->>'class', ': ', data->>'message')", "count", since, 10)
+	exceptions, err := s.store.GroupStats(ctx, app, stage, "exception", "concat(data->>'class', ': ', data->>'message')", "count", since, 10)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
 	bm := bucketMinutes(time.Since(since))
-	timeline, err := s.store.TimelineByClass(ctx, app, "request", since, time.Time{}, bm)
+	timeline, err := s.store.TimelineByClass(ctx, app, stage, "request", since, time.Time{}, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	recent, err := s.store.List(ctx, store.ListFilter{App: app, Since: since, Limit: 15})
+	recent, err := s.store.List(ctx, store.ListFilter{App: app, Stage: stage, Since: since, Limit: 15})
 	if err != nil {
 		httpError(w, s.log, err)
 		return
@@ -315,7 +339,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Exceptions":  exceptions,
 		"Chart": chartJSON(timeline, bm, chartOpts{
 			DrillURL:    "/section/requests",
-			DrillParams: "range=" + base.Range + string(base.AppQS),
+			DrillParams: "range=" + base.Range + string(base.ScopeQS),
 			OKLabel:     "2xx/3xx",
 			WarnLabel:   "4xx",
 			ErrLabel:    "5xx",
@@ -375,6 +399,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 
 	filter := store.ListFilter{
 		App:         base.App,
+		Stage:       base.Stage,
 		Type:        sec.Type,
 		Since:       since,
 		Until:       until,
@@ -400,13 +425,13 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 
 	var groups, slowGroups []store.GroupStat
 	if sec.GroupLabelExpr != "" && page == 1 && q.Get("search") == "" && q.Get("group") == "" {
-		groups, err = s.store.GroupStats(ctx, base.App, sec.Type, sec.GroupLabelExpr, "count", since, 10)
+		groups, err = s.store.GroupStats(ctx, base.App, base.Stage, sec.Type, sec.GroupLabelExpr, "count", since, 10)
 		if err != nil {
 			httpError(w, s.log, err)
 			return
 		}
 		if sec.SlowTitle != "" {
-			slowGroups, err = s.store.GroupStats(ctx, base.App, sec.Type, sec.GroupLabelExpr, "avg", since, 10)
+			slowGroups, err = s.store.GroupStats(ctx, base.App, base.Stage, sec.Type, sec.GroupLabelExpr, "avg", since, 10)
 			if err != nil {
 				httpError(w, s.log, err)
 				return
@@ -422,7 +447,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		span = until.Sub(chartSince)
 	}
 	bm := bucketMinutes(span)
-	timeline, err := s.store.TimelineByClass(ctx, base.App, sec.Type, chartSince, chartUntil, bm)
+	timeline, err := s.store.TimelineByClass(ctx, base.App, base.Stage, sec.Type, chartSince, chartUntil, bm)
 	if err != nil {
 		httpError(w, s.log, err)
 		return

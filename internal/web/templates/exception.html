@@ -1,13 +1,13 @@
 {{template "header" .Base}}
 
-<p class="breadcrumb"><a href="/exceptions?range={{.Base.Range}}{{.Base.AppQS}}">← Exceptions</a></p>
+<p class="breadcrumb"><a href="/exceptions?range={{.Base.Range}}{{.Base.ScopeQS}}">← Exceptions</a></p>
 
 <h1 class="exc-title"><span class="mono">{{.G.Class}}</span> <span class="badge triage-{{.G.Status}}">{{.G.Status}}</span></h1>
 {{with .G.Message}}<p class="exc-message">{{.}}</p>{{end}}
 
 <div class="exc-toolbar">
   <form method="post" action="/exceptions/{{.G.Group}}/status">
-    <input type="hidden" name="back" value="/exceptions/{{.G.Group}}?range={{.Base.Range}}{{.Base.AppQS}}">
+    <input type="hidden" name="back" value="/exceptions/{{.G.Group}}?range={{.Base.Range}}{{.Base.ScopeQS}}">
     {{if ne .G.Status "resolved"}}<button class="btn" name="action" value="resolve">{{icon "check"}} Resolve</button>{{end}}
     {{if ne .G.Status "ignored"}}<button class="btn" name="action" value="ignore">{{icon "x"}} Ignore</button>{{end}}
     {{if ne .G.Status "open"}}<button class="btn" name="action" value="reopen">{{icon "refresh"}} Reopen</button>{{end}}
@@ -76,7 +76,7 @@
       <td class="mono small">{{with index .Data "execution_preview"}}{{printf "%.60s" .}}{{end}}</td>
       <td>{{template "tracelink" .}}</td>
       <td>{{template "recordlink" .}}</td>
-      <td>{{if ne .ID $cur}}<a class="small" href="?record={{.ID}}&range={{$.Base.Range}}{{$.Base.AppQS}}">view stack</a>{{end}}</td>
+      <td>{{if ne .ID $cur}}<a class="small" href="?record={{.ID}}&range={{$.Base.Range}}{{$.Base.ScopeQS}}">view stack</a>{{end}}</td>
     </tr>
     {{end}}
     </tbody>

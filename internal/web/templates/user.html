@@ -1,6 +1,6 @@
 {{template "header" .Base}}
 
-<p class="breadcrumb"><a href="/users?range={{.Base.Range}}{{.Base.AppQS}}">← Users</a></p>
+<p class="breadcrumb"><a href="/users?range={{.Base.Range}}{{.Base.ScopeQS}}">← Users</a></p>
 
 <h1>{{icon "users"}} {{if .U.Name}}{{.U.Name}}{{else}}User #{{.U.UserID}}{{end}}</h1>
 {{if or .U.Username .U.Name}}<p class="exc-message">{{with .U.Username}}{{.}} · {{end}}id {{.U.UserID}}</p>{{end}}
