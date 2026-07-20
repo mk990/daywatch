@@ -117,6 +117,14 @@ func New(st *store.Store, log *slog.Logger, auth AuthConfig) (*Server, error) {
 		"add":  func(a, b int) int { return a + b },
 		"sub":  func(a, b int) int { return a - b },
 		"icon": icon,
+		// countfmt renders a possibly-capped Count: values past the cap show
+		// as "50000+" since Count stops counting there.
+		"countfmt": func(n int64) string {
+			if n > store.CountCap {
+				return strconv.FormatInt(store.CountCap, 10) + "+"
+			}
+			return strconv.FormatInt(n, 10)
+		},
 	}
 
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")

@@ -69,6 +69,19 @@ func (f ListFilter) where() (string, []any) {
 	return "WHERE " + strings.Join(conds, " AND "), args
 }
 
+// optEq returns " AND col = $n" (appending val to args) when val is non-empty,
+// and "" otherwise. Building the condition only when needed — instead of
+// "($n = '' OR col = $n)" — matters under pgx's prepared statements: a generic
+// plan cannot fold "$n = ''" into a constant, so the OR form blocks partial
+// indexes like records_app_idx and is evaluated per row.
+func optEq(args *[]any, col, val string) string {
+	if val == "" {
+		return ""
+	}
+	*args = append(*args, val)
+	return fmt.Sprintf(" AND %s = $%d", col, len(*args))
+}
+
 func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 50
@@ -102,10 +115,17 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 	return out, rows.Err()
 }
 
+// CountCap bounds Count: exact totals are only computed up to this many rows,
+// so pagination never walks millions of index entries per page render.
+const CountCap = 50000
+
+// Count returns the number of matching records, capped at CountCap+1
+// (meaning "more than CountCap").
 func (s *Store) Count(ctx context.Context, f ListFilter) (int64, error) {
 	where, args := f.where()
+	q := fmt.Sprintf("SELECT count(*) FROM (SELECT 1 FROM records %s LIMIT %d) c", where, CountCap+1)
 	var n int64
-	err := s.pool.QueryRow(ctx, "SELECT count(*) FROM records "+where, args...).Scan(&n)
+	err := s.pool.QueryRow(ctx, q, args...).Scan(&n)
 	return n, err
 }
 
@@ -131,10 +151,21 @@ type TypeCount struct {
 }
 
 func (s *Store) CountsByType(ctx context.Context, app, stage string, since time.Time) ([]TypeCount, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT type, count(*) FROM records
-		 WHERE ts >= $1 AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
-		 GROUP BY type ORDER BY count(*) DESC`, since, app, stage)
+	// Full hours are summed from the hourly rollups (tiny table); only the
+	// current partial hour is counted live from raw records. This keeps the
+	// dashboard O(rollup rows) instead of scanning every record since `since`.
+	args := []any{since.Truncate(time.Hour)}
+	appCond := optEq(&args, "app", app)
+	stageCond := optEq(&args, "stage", stage)
+	q := fmt.Sprintf(`
+		SELECT type, sum(cnt) FROM (
+			SELECT type, cnt FROM rollups_hourly
+			WHERE bucket >= $1 AND bucket < date_trunc('hour', now())%[1]s%[2]s
+			UNION ALL
+			SELECT type, 1 FROM records
+			WHERE ts >= greatest($1, date_trunc('hour', now()))%[1]s%[2]s
+		) t GROUP BY type ORDER BY sum(cnt) DESC`, appCond, stageCond)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +194,9 @@ type RouteStat struct {
 }
 
 func (s *Store) RequestStats(ctx context.Context, app, stage string, since time.Time, limit int) ([]RouteStat, error) {
-	rows, err := s.pool.Query(ctx, `
+	args := []any{since, limit}
+	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT group_hash,
 		       max(concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))) AS label,
 		       count(*),
@@ -173,10 +206,10 @@ func (s *Store) RequestStats(ctx context.Context, app, stage string, since time.
 		       count(*) FILTER (WHERE status >= '500' AND status < '600' AND length(status) = 3),
 		       max(ts)
 		FROM records
-		WHERE type = 'request' AND ts >= $1 AND ($3 = '' OR app = $3) AND ($4 = '' OR stage = $4)
+		WHERE type = 'request' AND ts >= $1%s
 		GROUP BY group_hash
 		ORDER BY count(*) DESC
-		LIMIT $2`, since, limit, app, stage)
+		LIMIT $2`, scope), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -214,14 +247,16 @@ func (s *Store) GroupStats(ctx context.Context, app, stage, typ, labelExpr, orde
 	if orderExpr == "" {
 		orderExpr = "count(*)"
 	}
+	args := []any{typ, since, limit}
+	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
 	q := fmt.Sprintf(`
 		SELECT group_hash, max(%s) AS label, count(*), avg(duration)::float8, max(duration), max(ts)
 		FROM records
-		WHERE type = $1 AND ts >= $2 AND group_hash <> '' AND ($4 = '' OR app = $4) AND ($5 = '' OR stage = $5)
+		WHERE type = $1 AND ts >= $2 AND group_hash <> ''%s
 		GROUP BY group_hash
 		ORDER BY %s DESC
-		LIMIT $3`, labelExpr, orderExpr)
-	rows, err := s.pool.Query(ctx, q, typ, since, limit, app, stage)
+		LIMIT $3`, labelExpr, scope, orderExpr)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -298,8 +333,10 @@ func (s *Store) TimelineByClass(ctx context.Context, app, stage, typ string, sin
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
 		return s.timelineFromRollups(ctx, app, stage, typ, since.Truncate(time.Hour), end, bucketMinutes)
 	}
+	args := []any{origin, fmt.Sprintf("%d minutes", bucketMinutes), end}
+	scope := optEq(&args, "type", typ) + optEq(&args, "app", app) + optEq(&args, "stage", stage)
 	q := fmt.Sprintf(`
-		SELECT date_bin($3::interval, ts, $2) AS bucket,
+		SELECT date_bin($2::interval, ts, $1) AS bucket,
 		       count(*) FILTER (WHERE %[1]s = 'ok'),
 		       count(*) FILTER (WHERE %[1]s = 'warn'),
 		       count(*) FILTER (WHERE %[1]s = 'err'),
@@ -308,10 +345,10 @@ func (s *Store) TimelineByClass(ctx context.Context, app, stage, typ string, sin
 		       coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration), 0)::float8,
 		       coalesce(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration), 0)::float8
 		FROM records
-		WHERE ts >= $2 AND ts < $4 AND ($1 = '' OR type = $1) AND ($5 = '' OR app = $5) AND ($6 = '' OR stage = $6)
+		WHERE ts >= $1 AND ts < $3%[2]s
 		GROUP BY bucket
-		ORDER BY bucket`, statusClassSQL)
-	rows, err := s.pool.Query(ctx, q, typ, origin, fmt.Sprintf("%d minutes", bucketMinutes), end, app, stage)
+		ORDER BY bucket`, statusClassSQL, scope)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

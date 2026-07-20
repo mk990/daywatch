@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS records_trace_idx   ON records (trace_id) WHERE trace
 CREATE INDEX IF NOT EXISTS records_group_idx   ON records (type, group_hash, ts DESC) WHERE group_hash <> '';
 CREATE INDEX IF NOT EXISTS records_ts_idx      ON records (ts);
 CREATE INDEX IF NOT EXISTS records_app_idx     ON records (app, type, ts DESC) WHERE app <> '';
+CREATE INDEX IF NOT EXISTS records_user_idx    ON records (user_id, ts DESC) WHERE user_id <> '';
+CREATE INDEX IF NOT EXISTS records_slow_idx    ON records (type, duration DESC) WHERE duration > 0;
 `
 
 // Record is one Nightwatch event with hot columns extracted from the raw payload.
@@ -243,12 +245,26 @@ func i64(v any) int64 {
 	return 0
 }
 
-// Prune deletes records older than the retention window.
+// Prune deletes records older than the retention window. It deletes in
+// bounded batches rather than one statement so a large backlog (e.g. the
+// first prune after retention is enabled) never holds a long transaction or
+// bloats WAL — each batch commits independently.
 func (s *Store) Prune(ctx context.Context, olderThan time.Duration) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM records WHERE ts < now() - $1::interval`,
-		fmt.Sprintf("%d seconds", int64(olderThan.Seconds())))
-	if err != nil {
-		return 0, err
+	const batch = 10000
+	interval := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
+	var total int64
+	for {
+		tag, err := s.pool.Exec(ctx, `
+			DELETE FROM records WHERE id IN (
+				SELECT id FROM records WHERE ts < now() - $1::interval LIMIT $2
+			)`, interval, batch)
+		if err != nil {
+			return total, err
+		}
+		n := tag.RowsAffected()
+		total += n
+		if n < batch {
+			return total, nil
+		}
 	}
-	return tag.RowsAffected(), nil
 }

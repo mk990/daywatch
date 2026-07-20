@@ -23,6 +23,8 @@ func (s *Store) UserStats(ctx context.Context, app, stage string, since time.Tim
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	args := []any{since, limit}
+	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
 	q := fmt.Sprintf(`
 		SELECT r.user_id, coalesce(u.name, ''), coalesce(u.username, ''),
 		       r.events, r.requests, r.errors, r.last_seen
@@ -32,7 +34,7 @@ func (s *Store) UserStats(ctx context.Context, app, stage string, since time.Tim
 			       count(*) FILTER (WHERE %s = 'err') AS errors,
 			       max(ts) AS last_seen
 			FROM records
-			WHERE user_id <> '' AND ts >= $1 AND ($2 = '' OR app = $2) AND ($4 = '' OR stage = $4)
+			WHERE user_id <> '' AND ts >= $1%s
 			GROUP BY user_id
 		) r
 		LEFT JOIN LATERAL (
@@ -42,8 +44,8 @@ func (s *Store) UserStats(ctx context.Context, app, stage string, since time.Tim
 			ORDER BY ts DESC LIMIT 1
 		) u ON true
 		ORDER BY r.last_seen DESC
-		LIMIT $3`, statusClassSQL)
-	rows, err := s.pool.Query(ctx, q, since, app, limit, stage)
+		LIMIT $2`, statusClassSQL, scope)
+	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

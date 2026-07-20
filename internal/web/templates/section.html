@@ -1,6 +1,6 @@
 {{template "header" .Base}}
 
-<h1>{{icon .Section.Icon}} {{.Section.Title}} <span class="count">({{.Count}})</span></h1>
+<h1>{{icon .Section.Icon}} {{.Section.Title}} <span class="count">({{countfmt .Count}})</span></h1>
 
 {{if .Window}}
 <div class="window-chip">
