@@ -152,14 +152,31 @@ incoming records, e.g. *"≥5 error requests in 5 minutes"*:
 - **Condition**: either a *count threshold* — record type (or any), severity class
   (errors / warnings / any), threshold count, sliding window — or *new exception appears*,
   which fires when an exception group is seen for the very first time.
-- **Channel**: a webhook URL with a format — `json` (generic), `slack`, `discord`, or
-  `telegram` (needs a chat ID; point the URL at `https://api.telegram.org/bot<TOKEN>/sendMessage`).
+- **Channel**: a webhook URL with a format — `json` (generic), `slack`, `discord`,
+  `telegram` (needs a chat ID; point the URL at `https://api.telegram.org/bot<TOKEN>/sendMessage`),
+  or `ntfy` (see below).
 - **Cooldown** silences a rule after it fires so a sustained incident doesn't spam you.
 - Every firing is recorded in the history table with its delivery status; a **test** button
   sends a `[TEST]` notification immediately to verify the wiring.
 
 Set `DW_BASE_URL` (e.g. `https://daywatch.example.com`) to include a panel link in
 notifications.
+
+### ntfy
+
+Point the URL at the topic on your own server (or ntfy.sh), e.g.
+`https://ntfy.example.com/daywatch`. The message is published as the request body, with
+the rule name and app as the notification title, `high` priority for error rules, and
+`DW_BASE_URL` as the click action.
+
+Protected servers are supported through the **Username / Password** fields on the rule:
+
+- both set → HTTP basic auth (`auth-user`/`auth-pass` on the topic's ACL);
+- password only → sent as `Authorization: Bearer <token>`, for ntfy access tokens (`tk_…`).
+
+Credentials are stored in Postgres in plaintext, so prefer a per-topic user or a scoped
+access token over an admin account. The fields also apply to the generic `json` format,
+for self-hosted webhooks behind basic auth.
 
 ## Panel authentication
 

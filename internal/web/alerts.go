@@ -20,7 +20,7 @@ type AlertTester interface {
 // import cycle between web and alert).
 func (s *Server) SetAlertTester(t AlertTester) { s.alertTester = t }
 
-var alertFormats = []string{"json", "slack", "discord", "telegram"}
+var alertFormats = []string{"json", "slack", "discord", "telegram", "ntfy"}
 
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	base, _ := s.base(r, "alerts")
@@ -71,6 +71,8 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 		ChannelURL:      strings.TrimSpace(r.PostFormValue("channel_url")),
 		ChannelFormat:   r.PostFormValue("channel_format"),
 		TelegramChatID:  strings.TrimSpace(r.PostFormValue("telegram_chat_id")),
+		AuthUser:        strings.TrimSpace(r.PostFormValue("auth_user")),
+		AuthPass:        r.PostFormValue("auth_pass"),
 	}
 
 	// New-exception rules fire on any new group; the threshold/type/class
@@ -127,6 +129,12 @@ func validateRule(r store.AlertRule) string {
 	}
 	if r.ChannelFormat == "telegram" && r.TelegramChatID == "" {
 		return "telegram format requires a chat ID"
+	}
+	if r.ChannelFormat == "ntfy" && strings.Trim(u.Path, "/") == "" {
+		return "ntfy URL must include the topic, e.g. https://ntfy.example.com/daywatch"
+	}
+	if r.AuthUser != "" && r.AuthPass == "" {
+		return "a username needs a password"
 	}
 	switch r.StatusClass {
 	case "", "err", "warn":

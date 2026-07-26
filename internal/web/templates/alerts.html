@@ -50,7 +50,7 @@
     </div>
     <div class="form-row">
       <label class="grow">Webhook URL
-        <input type="url" name="channel_url" placeholder="https://hooks.slack.com/services/… or any endpoint" required>
+        <input type="url" name="channel_url" id="alert-url" placeholder="https://hooks.slack.com/services/… or any endpoint" required>
       </label>
       <label>Format
         <select name="channel_format" id="alert-format">
@@ -61,6 +61,16 @@
         <input type="text" name="telegram_chat_id" placeholder="-100123456789">
       </label>
       <button type="submit">Create rule</button>
+    </div>
+    <div class="form-row" id="alert-auth" hidden>
+      <label>Username
+        <input type="text" name="auth_user" autocomplete="off" placeholder="optional">
+      </label>
+      <label>Password / token
+        <input type="password" name="auth_pass" autocomplete="new-password" placeholder="optional">
+      </label>
+      <span class="hint">Basic auth for a self-hosted endpoint. Leave the username empty to send the
+        password as a bearer token (ntfy access token, <code>tk_…</code>).</span>
     </div>
   </form>
 </div>
@@ -126,8 +136,18 @@
 document.addEventListener('DOMContentLoaded', function () {
   const fmt = document.getElementById('alert-format');
   const tg = document.getElementById('tg-chat');
-  if (fmt && tg) {
-    const sync = () => { tg.hidden = fmt.value !== 'telegram'; };
+  const auth = document.getElementById('alert-auth');
+  const url = document.getElementById('alert-url');
+  if (fmt && tg && auth) {
+    const sync = () => {
+      tg.hidden = fmt.value !== 'telegram';
+      auth.hidden = fmt.value === 'slack' || fmt.value === 'discord' || fmt.value === 'telegram';
+      if (url) {
+        url.placeholder = fmt.value === 'ntfy'
+          ? 'https://ntfy.example.com/daywatch'
+          : 'https://hooks.slack.com/services/… or any endpoint';
+      }
+    };
     fmt.addEventListener('change', sync);
     sync();
   }

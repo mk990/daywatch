@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
+	"mime"
 	"net/http"
 	"time"
 
@@ -150,9 +152,36 @@ func (e *Evaluator) message(r store.AlertRule, matched int64, test bool) string 
 	return msg
 }
 
+// ntfyHeaders builds the X-* metadata ntfy reads alongside the message body.
+// Header values are RFC 2047 encoded when they contain non-ASCII characters,
+// which is how ntfy expects Unicode titles.
+func ntfyHeaders(r store.AlertRule, baseURL string) http.Header {
+	h := http.Header{}
+	title := "Daywatch: " + r.Name
+	if r.App != "" {
+		title += " [" + r.App + "]"
+	}
+	h.Set("X-Title", mime.BEncoding.Encode("UTF-8", title))
+
+	if r.StatusClass == "warn" {
+		h.Set("X-Priority", "default")
+		h.Set("X-Tags", "warning")
+	} else {
+		h.Set("X-Priority", "high")
+		h.Set("X-Tags", "rotating_light")
+	}
+	if baseURL != "" {
+		h.Set("X-Click", baseURL)
+	}
+	return h
+}
+
 func (e *Evaluator) deliver(ctx context.Context, r store.AlertRule, msg string) error {
 	var body []byte
 	var err error
+	contentType := "application/json"
+	header := http.Header{}
+
 	switch r.ChannelFormat {
 	case "slack":
 		body, err = json.Marshal(map[string]string{"text": msg})
@@ -160,6 +189,11 @@ func (e *Evaluator) deliver(ctx context.Context, r store.AlertRule, msg string) 
 		body, err = json.Marshal(map[string]string{"content": msg})
 	case "telegram":
 		body, err = json.Marshal(map[string]string{"chat_id": r.TelegramChatID, "text": msg})
+	case "ntfy":
+		// ntfy publishes the raw request body as the message when POSTing to
+		// a topic URL; everything else travels in X-* headers.
+		body, contentType = []byte(msg), "text/plain; charset=utf-8"
+		header = ntfyHeaders(r, e.baseURL)
 	default: // generic JSON webhook
 		body, err = json.Marshal(map[string]any{
 			"source":  "daywatch",
@@ -175,7 +209,17 @@ func (e *Evaluator) deliver(ctx context.Context, r store.AlertRule, msg string) 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	maps.Copy(req.Header, header)
+	req.Header.Set("Content-Type", contentType)
+	// Self-hosted endpoints (ntfy in particular) are usually behind basic
+	// auth; a password without a username is sent as a bearer token, which
+	// is how ntfy access tokens are presented.
+	switch {
+	case r.AuthUser != "":
+		req.SetBasicAuth(r.AuthUser, r.AuthPass)
+	case r.AuthPass != "":
+		req.Header.Set("Authorization", "Bearer "+r.AuthPass)
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {
