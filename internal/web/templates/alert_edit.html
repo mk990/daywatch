@@ -1,0 +1,12 @@
+{{template "header" .Base}}
+
+<h1>{{icon "siren"}} Edit rule</h1>
+
+{{if .Error}}<div class="login-error">{{.Error}}</div>{{end}}
+
+<div class="card">
+  <h2>{{.Form.Rule.Name}}</h2>
+  {{template "alertform" .Form}}
+</div>
+
+{{template "footer" .Base}}

@@ -1,0 +1,113 @@
+{{define "alertform"}}
+<form method="post" action="{{.Action}}" class="alert-form">
+  <div class="form-row">
+    <label>Name
+      <input type="text" name="name" placeholder="Too many 5xx errors" value="{{.Rule.Name}}" required>
+    </label>
+    <label>Condition
+      <select name="kind" id="alert-kind">
+        <option value="threshold" {{if eq .Rule.Kind "threshold"}}selected{{end}}>record count threshold</option>
+        <option value="new-exception" {{if eq .Rule.Kind "new-exception"}}selected{{end}}>new exception appears</option>
+      </select>
+    </label>
+    {{if .Apps}}
+    <label>App
+      <select name="app">
+        <option value="">all apps</option>
+        {{$app := .Rule.App}}
+        {{range .Apps}}<option value="{{.}}" {{if eq . $app}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    {{end}}
+    <label class="threshold-only">Record type
+      <select name="record_type">
+        <option value="">any</option>
+        {{$typ := .Rule.RecordType}}
+        {{range .Types}}<option value="{{.Type}}" {{if eq .Type $typ}}selected{{end}}>{{.Title}}</option>{{end}}
+      </select>
+    </label>
+    <label class="threshold-only">Severity
+      <select name="status_class">
+        <option value="err" {{if eq .Rule.StatusClass "err"}}selected{{end}}>errors only</option>
+        <option value="warn" {{if eq .Rule.StatusClass "warn"}}selected{{end}}>warnings only</option>
+        <option value="" {{if eq .Rule.StatusClass ""}}selected{{end}}>any record</option>
+      </select>
+    </label>
+    <label class="threshold-only">Threshold (≥)
+      <input type="number" name="threshold" value="{{.Rule.Threshold}}" min="1">
+    </label>
+    <label>Window (min)
+      <input type="number" name="window_minutes" value="{{.Rule.WindowMinutes}}" min="1" max="1440">
+    </label>
+    <label>Cooldown (min)
+      <input type="number" name="cooldown_minutes" value="{{.Rule.CooldownMinutes}}" min="1">
+    </label>
+  </div>
+  <div class="form-row">
+    <label class="grow">Webhook URL
+      <input type="url" name="channel_url" id="alert-url" value="{{.Rule.ChannelURL}}"
+             placeholder="https://hooks.slack.com/services/… or any endpoint" required>
+    </label>
+    <label>Format
+      <select name="channel_format" id="alert-format">
+        {{$fmt := .Rule.ChannelFormat}}
+        {{range .Formats}}<option value="{{.}}" {{if eq . $fmt}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label id="tg-chat" hidden>Telegram chat ID
+      <input type="text" name="telegram_chat_id" value="{{.Rule.TelegramChatID}}" placeholder="-100123456789">
+    </label>
+    <button type="submit">{{.Submit}}</button>
+    {{if .Edit}}<a href="/alerts" class="clear">cancel</a>{{end}}
+  </div>
+  <div class="form-row" id="alert-auth" hidden>
+    <label>Username
+      <input type="text" name="auth_user" autocomplete="off" value="{{.Rule.AuthUser}}" placeholder="optional">
+    </label>
+    <label>Password / token
+      <input type="password" name="auth_pass" autocomplete="new-password"
+             placeholder="{{if .HasAuth}}unchanged{{else}}optional{{end}}">
+    </label>
+    {{if .HasAuth}}
+    <label class="deep" title="Remove the stored username and password from this rule.">
+      <input type="checkbox" name="clear_auth" value="1"> clear credentials
+    </label>
+    {{end}}
+    <span class="hint">Basic auth for a self-hosted endpoint. Leave the username empty to send the
+      password as a bearer token (ntfy access token, <code>tk_…</code>).
+      {{if .HasAuth}}The stored password is never shown; leave it blank to keep it.{{end}}</span>
+  </div>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const fmt = document.getElementById('alert-format');
+  const tg = document.getElementById('tg-chat');
+  const auth = document.getElementById('alert-auth');
+  const url = document.getElementById('alert-url');
+  if (fmt && tg && auth) {
+    const sync = () => {
+      tg.hidden = fmt.value !== 'telegram';
+      auth.hidden = fmt.value === 'slack' || fmt.value === 'discord' || fmt.value === 'telegram';
+      if (url) {
+        url.placeholder = fmt.value === 'ntfy'
+          ? 'https://ntfy.example.com/daywatch'
+          : 'https://hooks.slack.com/services/… or any endpoint';
+      }
+    };
+    fmt.addEventListener('change', sync);
+    sync();
+  }
+  const kind = document.getElementById('alert-kind');
+  if (kind) {
+    const sync = () => {
+      document.querySelectorAll('.threshold-only').forEach((el) => {
+        el.hidden = kind.value !== 'threshold';
+      });
+    };
+    kind.addEventListener('change', sync);
+    sync();
+  }
+});
+</script>
+{{end}}
