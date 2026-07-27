@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mk/daywatch/internal/store"
+	"github.com/mk990/daywatch/internal/store"
 )
 
 func postForm(values url.Values) *http.Request {

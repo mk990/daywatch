@@ -62,6 +62,61 @@ func (s *Store) UserStats(ctx context.Context, app, stage string, since time.Tim
 	return out, rows.Err()
 }
 
+// UserNames maps user IDs to a display label, taken from each user's most
+// recent "user" record: its name, or its username when the name is blank.
+// IDs with no such record are absent from the map — most records carry only
+// a numeric id, so anything showing one can look the person up here.
+func (s *Store) UserNames(ctx context.Context, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (user_id) user_id,
+		       coalesce(nullif(data->>'name', ''), nullif(data->>'username', ''), '')
+		FROM records
+		WHERE type = 'user' AND user_id = ANY($1)
+		ORDER BY user_id, ts DESC`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		if name != "" {
+			out[id] = name
+		}
+	}
+	return out, rows.Err()
+}
+
+// UserTypeCounts breaks one user's activity down by record type, most
+// frequent first, for the filter chips on the user page.
+func (s *Store) UserTypeCounts(ctx context.Context, app, stage, userID string) ([]TypeCount, error) {
+	args := []any{userID}
+	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT type, count(*) FROM records
+		WHERE user_id = $1%s
+		GROUP BY type ORDER BY count(*) DESC, type`, scope), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TypeCount
+	for rows.Next() {
+		var tc TypeCount
+		if err := rows.Scan(&tc.Type, &tc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
+}
+
 // GetUserStat returns one user's all-time (within retention) activity.
 func (s *Store) GetUserStat(ctx context.Context, app, stage, userID string) (*UserStat, error) {
 	q := fmt.Sprintf(`

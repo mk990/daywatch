@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mk/daywatch/internal/store"
+	"github.com/mk990/daywatch/internal/store"
 )
 
 // AlertTester fires a rule immediately (used by the "send test" button).

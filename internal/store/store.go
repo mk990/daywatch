@@ -72,6 +72,9 @@ type Record struct {
 	Status   string
 	Summary  string
 	Data     map[string]any
+	// UserName is not stored: it is filled in from the user's latest "user"
+	// record so views can show a name next to a bare numeric UserID.
+	UserName string
 }
 
 type Store struct {

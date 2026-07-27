@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mk/daywatch/internal/config"
+	"github.com/mk990/daywatch/internal/config"
 )
 
 // buildFrame mirrors Laravel\Nightwatch\Payload::pull().

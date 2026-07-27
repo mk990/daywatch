@@ -26,7 +26,13 @@ Every record keeps its full raw payload (JSONB) and is linked by `trace_id`: the
 renders an APM-style **waterfall** — every query, cache event, outgoing request, and log
 positioned on the request's timeline, so gaps and slow spans are visible at a glance. A
 **Users** page aggregates per-user activity (requests, errors, last seen) with a per-user
-activity feed.
+activity feed that can be narrowed to one record type, and colour-codes and syntax-highlights
+each entry by what it is — SQL, an HTTP verb and path, or an exception class and message.
+
+Records carry only a numeric user id, so wherever one is shown — the requests list, a record's
+detail page, the activity feed — Daywatch resolves it against that user's most recent `user`
+record and displays the name alongside the id (`مریم کریمی #42`), linked to their page. The id
+always stays visible, since that is what the raw payload contains.
 
 Long-range charts (7d/30d) are served from **hourly rollups** maintained in the background,
 so they stay fast regardless of traffic volume and survive raw-record pruning

@@ -7,7 +7,7 @@
     <tr><th>Timestamp</th><td>{{timefmt .Record.TS}} ({{ago .Record.TS}})</td></tr>
     {{if .Record.App}}<tr><th>App</th><td><span class="pill">{{.Record.App}}</span></td></tr>{{end}}
     {{if .Record.TraceID}}<tr><th>Trace</th><td><a href="/trace/{{.Record.TraceID}}" class="mono">{{.Record.TraceID}}</a></td></tr>{{end}}
-    {{if .Record.UserID}}<tr><th>User</th><td>{{.Record.UserID}}</td></tr>{{end}}
+    {{if .Record.UserID}}<tr><th>User</th><td>{{.User}}</td></tr>{{end}}
     {{if .Record.Server}}<tr><th>Server</th><td>{{.Record.Server}}</td></tr>{{end}}
     {{if .Record.Deploy}}<tr><th>Deploy</th><td class="mono">{{.Record.Deploy}}</td></tr>{{end}}
     {{if .Record.Stage}}<tr><th>Stage</th><td>{{.Record.Stage}}</td></tr>{{end}}

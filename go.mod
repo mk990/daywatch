@@ -1,4 +1,4 @@
-module github.com/mk/daywatch
+module github.com/mk990/daywatch
 
 go 1.25.0
 

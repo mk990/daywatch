@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"html/template"
 
-	"github.com/mk/daywatch/internal/store"
+	"github.com/mk990/daywatch/internal/store"
 )
 
 func esc(s string) template.HTML { return template.HTML(template.HTMLEscapeString(s)) }
@@ -64,20 +64,16 @@ func durationCell(r store.Record) template.HTML {
 	}
 }
 
+// statusBadge colours a record's status through statusClass, so a badge
+// agrees with how the same record is bucketed in the charts. The status
+// text is always shown, so the colour reinforces rather than carries it.
 func statusBadge(r store.Record) template.HTML {
-	cls := "badge"
-	switch {
-	case r.Status == "":
+	if r.Status == "" {
 		return ""
-	case r.Status >= "200" && r.Status < "300", r.Status == "0", r.Status == "sent",
-		r.Status == "processed", r.Status == "handled", r.Status == "hit", r.Status == "success":
-		cls += " ok"
-	case r.Status >= "500" && r.Status <= "599", r.Status == "failed", r.Status == "unhandled",
-		r.Status == "error", r.Status == "critical", r.Status == "emergency", r.Status == "alert":
-		cls += " err"
-	case r.Status >= "400" && r.Status < "500", r.Status == "warning", r.Status == "miss",
-		r.Status == "released":
-		cls += " warn"
+	}
+	cls := "badge"
+	if c := statusClass(r.Status); c != "" {
+		cls += " " + c
 	}
 	return template.HTML(fmt.Sprintf(`<span class="%s">%s</span>`, cls, template.HTMLEscapeString(r.Status)))
 }
@@ -102,7 +98,7 @@ func buildSections() []Section {
 				{"Status", statusBadge},
 				{"Duration", durationCell},
 				{"Queries", func(r store.Record) template.HTML { return field(r, "queries") }},
-				{"User", func(r store.Record) template.HTML { return esc(r.UserID) }},
+				{"User", userCell},
 			},
 		},
 		{

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mk/daywatch/internal/store"
+	"github.com/mk990/daywatch/internal/store"
 )
 
 //go:embed templates/*.html
@@ -114,9 +114,11 @@ func New(st *store.Store, log *slog.Logger, auth AuthConfig) (*Server, error) {
 			}
 			return string(b)
 		},
-		"add":  func(a, b int) int { return a + b },
-		"sub":  func(a, b int) int { return a - b },
-		"icon": icon,
+		"add":      func(a, b int) int { return a + b },
+		"sub":      func(a, b int) int { return a - b },
+		"icon":     icon,
+		"wfclass":  wfClass,
+		"initials": userInitials,
 		// countfmt renders a possibly-capped Count: values past the cap show
 		// as "50000+" since Count stops counting there.
 		"countfmt": func(n int64) string {
@@ -425,6 +427,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
+	s.withUserNames(ctx, records)
 	count, err := s.store.Count(ctx, filter)
 	if err != nil {
 		httpError(w, s.log, err)
@@ -512,8 +515,10 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	one := []store.Record{*rec}
+	s.withUserNames(r.Context(), one)
 	base, _ := s.base(r, "")
-	s.render(w, "record.html", map[string]any{"Base": base, "Record": rec})
+	s.render(w, "record.html", map[string]any{"Base": base, "Record": one[0], "User": userCell(one[0])})
 }
 
 // wfRow is one row of the trace waterfall: a record positioned on the
@@ -543,6 +548,15 @@ var wfClasses = map[string]string{
 	"log":              "wf-log",
 }
 
+// wfClass is the per-type colour class, shared by the trace waterfall and
+// the user activity feed so a record type looks the same everywhere.
+func wfClass(t string) string {
+	if c, ok := wfClasses[t]; ok {
+		return c
+	}
+	return "wf-log"
+}
+
 // recordSummary is the record's descriptive label. Records ingested since
 // the summary column was added carry it; older ones are derived on the fly.
 func recordSummary(rec store.Record) string {
@@ -560,6 +574,42 @@ func recordSummary(rec store.Record) string {
 		}
 	}
 	return rec.Type
+}
+
+// statusClass buckets a status into ok/warn/err, mirroring statusClassSQL in
+// the store so a badge in the panel matches how the same record is counted
+// in charts. "" means unclassified.
+func statusClass(status string) string {
+	// statusClassSQL matches '^[2-5][0-9][0-9]$', so all three must be
+	// digits — "2xx" is not a 2xx.
+	if len(status) == 3 && isDigits(status) {
+		switch status[0] {
+		case '2', '3':
+			return "ok"
+		case '4':
+			return "warn"
+		case '5':
+			return "err"
+		}
+	}
+	switch status {
+	case "0", "sent", "processed", "handled", "hit", "success", "info", "debug":
+		return "ok"
+	case "warning", "miss", "released", "notice":
+		return "warn"
+	case "failed", "unhandled", "error", "critical", "emergency", "alert":
+		return "err"
+	}
+	return ""
+}
+
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func statusIsErr(status string) bool {
@@ -608,12 +658,9 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 				Label:     trunc(recordSummary(rec), 70),
 				OffsetPct: float64(rec.TS.Sub(start).Microseconds()) / float64(spanUS) * 100,
 				WidthPct:  float64(rec.Duration) / float64(spanUS) * 100,
-				Class:     wfClasses[rec.Type],
+				Class:     wfClass(rec.Type),
 				Err:       statusIsErr(rec.Status),
 				Marker:    rec.Duration == 0,
-			}
-			if row.Class == "" {
-				row.Class = "wf-log"
 			}
 			if !row.Marker && row.WidthPct < 0.5 {
 				row.WidthPct = 0.5 // keep short spans visible

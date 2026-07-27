@@ -11,11 +11,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/mk/daywatch/internal/alert"
-	"github.com/mk/daywatch/internal/config"
-	"github.com/mk/daywatch/internal/ingest"
-	"github.com/mk/daywatch/internal/store"
-	"github.com/mk/daywatch/internal/web"
+	"github.com/mk990/daywatch/internal/alert"
+	"github.com/mk990/daywatch/internal/config"
+	"github.com/mk990/daywatch/internal/ingest"
+	"github.com/mk990/daywatch/internal/store"
+	"github.com/mk990/daywatch/internal/web"
 )
 
 // notifyingSink stores records and then signals the live-update hub.

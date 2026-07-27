@@ -601,3 +601,92 @@ code.token {
 .tok-f   { color: #ffcb6b; }               /* class names */
 .tok-p   { color: #89ddff; font-weight: 600; } /* sql placeholders */
 .tok-key { color: #82aaff; }               /* json keys */
+
+/* ---- User detail ---------------------------------------------------- */
+
+.user-head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.user-head h1 { margin: 0; }
+
+.user-avatar {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  color: var(--bg);
+  background: linear-gradient(135deg, var(--accent), #f0c26b);
+}
+
+.user-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+.user-handle { color: var(--text); font-weight: 600; }
+/* The numeric id stays visible everywhere: it is what the raw payload
+   carries, so it is how a record is correlated back to the app. */
+.user-id {
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* User references inside tables: name first, id as a quiet suffix. */
+.user-ref { display: inline-flex; align-items: baseline; gap: 6px; text-decoration: none; }
+.user-ref:hover .user-name { text-decoration: underline; }
+.user-name { color: var(--text); }
+.user-ref:hover .user-id { color: var(--accent); }
+
+/* ---- Record-type filter chips --------------------------------------- */
+
+.type-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+  transition: border-color .15s ease, color .15s ease;
+}
+.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip.active { color: var(--text); border-color: var(--accent); background: rgba(232, 163, 61, .12); }
+.chip.active .chip-count { color: var(--accent); }
+.chip-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Colour dot reuses the waterfall palette, always paired with the type
+   name so the colour is reinforcement rather than the only signal. */
+.chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.type-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+
+/* ---- Activity feed --------------------------------------------------- */
+
+.activity td.num, .activity th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.activity td.nowrap { white-space: nowrap; color: var(--muted); }
+.activity .summary-cell { max-width: 620px; overflow-wrap: anywhere; }
+
+/* HTTP verbs: colour follows the usual read/write/destroy convention. */
+.verb {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .06);
+  color: var(--muted);
+}
+.verb[data-verb="GET"]    { color: #82aaff; }
+.verb[data-verb="HEAD"]   { color: #82aaff; }
+.verb[data-verb="POST"]   { color: var(--ok); }
+.verb[data-verb="PUT"]    { color: var(--accent); }
+.verb[data-verb="PATCH"]  { color: var(--accent); }
+.verb[data-verb="DELETE"] { color: var(--err); }
+.path { color: var(--text); }
+
+.exc-class { color: #ffcb6b; font-weight: 600; }
+.exc-text { color: var(--muted); }

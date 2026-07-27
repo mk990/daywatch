@@ -2,8 +2,18 @@
 
 <p class="breadcrumb"><a href="/users?range={{.Base.Range}}{{.Base.ScopeQS}}">← Users</a></p>
 
-<h1>{{icon "users"}} {{if .U.Name}}{{.U.Name}}{{else}}User #{{.U.UserID}}{{end}}</h1>
-{{if or .U.Username .U.Name}}<p class="exc-message">{{with .U.Username}}{{.}} · {{end}}id {{.U.UserID}}</p>{{end}}
+<div class="user-head">
+  <div class="user-avatar" aria-hidden="true">{{initials .U}}</div>
+  <div>
+    <h1>{{if .U.Name}}{{.U.Name}}{{else}}User #{{.U.UserID}}{{end}}</h1>
+    <p class="user-meta">
+      {{with .U.Username}}<span class="user-handle">{{.}}</span>{{end}}
+      <span class="user-id">#{{.U.UserID}}</span>
+      {{if .Base.App}}<span class="pill">{{.Base.App}}</span>{{end}}
+      {{if .Base.Stage}}<span class="pill">{{.Base.Stage}}</span>{{end}}
+    </p>
+  </div>
+</div>
 
 <div class="cards">
   <div class="card stat"><span class="stat-num">{{.U.Events}}</span><span class="stat-label">events</span></div>
@@ -13,18 +23,31 @@
 </div>
 
 <div class="card">
-  <h2>Recent activity <span class="hint">latest 50 records</span></h2>
+  <h2>Recent activity
+    <span class="hint">{{if .Type}}latest 50 {{.Type}} records{{else}}latest 50 records{{end}}</span>
+  </h2>
+
+  <nav class="type-chips" aria-label="Filter activity by record type">
+    {{range .Chips}}
+    <a href="{{.URL}}" class="chip{{if .Active}} active{{end}}"
+       {{if .Active}}aria-current="true"{{end}}>
+      {{if .Type}}<span class="chip-dot {{wfclass .Type}}" aria-hidden="true"></span>{{end}}
+      {{.Label}}<span class="chip-count">{{.Count}}</span>
+    </a>
+    {{end}}
+  </nav>
+
   {{if .Rows}}
-  <table>
-    <thead><tr><th>When</th><th>Type</th><th>Summary</th><th>Status</th><th>Duration</th><th>Trace</th><th></th></tr></thead>
+  <table class="activity">
+    <thead><tr><th>When</th><th>Type</th><th>Summary</th><th>Status</th><th class="num">Duration</th><th>Trace</th><th></th></tr></thead>
     <tbody>
     {{range .Rows}}
     <tr>
-      <td title="{{timefmt .Rec.TS}}">{{ago .Rec.TS}}</td>
-      <td><span class="pill">{{.Rec.Type}}</span></td>
-      <td class="mono small">{{.Summary}}</td>
-      <td>{{if .Rec.Status}}<span class="badge {{if .Err}}err{{end}}">{{.Rec.Status}}</span>{{end}}</td>
-      <td>{{if .Rec.Duration}}{{ms .Rec.Duration}}{{end}}</td>
+      <td class="nowrap" title="{{timefmt .Rec.TS}}">{{ago .Rec.TS}}</td>
+      <td><span class="type-tag"><span class="chip-dot {{.Class}}" aria-hidden="true"></span>{{.Rec.Type}}</span></td>
+      <td class="mono small summary-cell" dir="auto">{{.Summary}}</td>
+      <td>{{.Status}}</td>
+      <td class="num">{{if .Rec.Duration}}{{ms .Rec.Duration}}{{end}}</td>
       <td>{{template "tracelink" .Rec}}</td>
       <td>{{template "recordlink" .Rec}}</td>
     </tr>
@@ -32,7 +55,7 @@
     </tbody>
   </table>
   {{else}}
-  <p class="empty">No records for this user.</p>
+  <p class="empty">No {{if .Type}}{{.Type}} {{end}}records for this user.</p>
   {{end}}
 </div>
 

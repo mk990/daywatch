@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mk/daywatch/internal/config"
-	"github.com/mk/daywatch/internal/store"
+	"github.com/mk990/daywatch/internal/config"
+	"github.com/mk990/daywatch/internal/store"
 )
 
 // handleApps renders the app management page: registered apps with their
