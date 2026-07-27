@@ -9,7 +9,13 @@ permissions:
   contents: write
 
 jobs:
+  # The release notes point at images that publish-docker only pushes when
+  # these pass, so gate the release page on them too.
+  checks:
+    uses: ./.github/workflows/go-checks.yml
+
   create-release:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

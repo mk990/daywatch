@@ -15,7 +15,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # Gates the image: nothing reaches the registry without passing.
+  checks:
+    uses: ./.github/workflows/go-checks.yml
+
   build-and-push:
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: read

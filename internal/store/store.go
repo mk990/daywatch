@@ -134,6 +134,10 @@ func (s *Store) migrate(ctx context.Context) error {
 
 func (s *Store) Close() { s.pool.Close() }
 
+// Ping reports whether the database is reachable. It backs /healthz, so it
+// takes a connection from the pool rather than trusting cached state.
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
 // InsertRecords parses raw record objects and batch-inserts them under the
 // given app ("" when token validation is off).
 func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app string) (int, error) {

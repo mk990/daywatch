@@ -26,7 +26,10 @@
   <h2>Registered apps</h2>
   {{if .Apps}}
   <table>
-    <thead><tr><th>App</th><th>Ingest token</th><th>Records</th><th>Last seen</th><th>Created</th><th></th></tr></thead>
+    <thead><tr><th>App</th><th>Ingest token</th>
+      <th title="Records ingested, counted from hourly rollups — includes records already pruned from storage.">Ingested</th>
+      <th title="Exact within the current hour; hour-granular before it.">Last seen</th>
+      <th>Created</th><th></th></tr></thead>
     <tbody>
     {{$created := .Created}}
     {{range .Apps}}

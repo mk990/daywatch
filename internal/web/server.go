@@ -161,10 +161,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /alerts/{id}/toggle", s.handleAlertToggle)
 	mux.HandleFunc("POST /alerts/{id}/delete", s.handleAlertDelete)
 	mux.HandleFunc("POST /alerts/{id}/test", s.handleAlertTest)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
+	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	return s.requireAuth(mux)
 }
@@ -661,6 +658,20 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 		"SpanUS":  spanUS,
 		"Ticks":   ticks,
 	})
+}
+
+// handleHealth backs the container HEALTHCHECK. It reports unhealthy when
+// Postgres is unreachable: a process that is listening but cannot serve a
+// single page should not keep a green checkmark. Stays outside auth.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		s.log.Warn("health check failed", "error", err)
+		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Write([]byte("ok"))
 }
 
 func httpError(w http.ResponseWriter, log *slog.Logger, err error) {

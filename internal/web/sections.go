@@ -34,11 +34,17 @@ func anyToString(v any) string {
 	}
 }
 
+// trunc cuts to at most n runes, never splitting a multi-byte character —
+// slicing by byte would emit invalid UTF-8 for non-ASCII payloads.
 func trunc(s string, n int) string {
-	if len(s) <= n {
+	if len(s) <= n { // n bytes is a lower bound on n runes
 		return s
 	}
-	return s[:n] + "…"
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // hlSpan wraps escaped text for the client-side syntax highlighter.

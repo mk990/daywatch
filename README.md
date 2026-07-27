@@ -106,10 +106,15 @@ panel's **Apps** page:
 3. Traffic appears immediately — token hashes are resolved against the database on every
    frame, so **no restart is needed** for new apps, token rotations, or deletions.
 
-The Apps page shows per-app record counts and last-seen times, and offers **rotate**
+The Apps page shows per-app ingest totals and last-seen times, and offers **rotate**
 (generate a new token; the old one stops working at once) and **delete** (the token is
 revoked; already-stored records are kept under "All apps"). Once at least one app is
 registered, unknown tokens are rejected.
+
+The **Ingested** column is served from the hourly rollups plus the last two hours of raw
+records, so the page stays fast on large databases. It therefore counts everything an app
+has ever sent within the rollup window (`DW_ROLLUP_DAYS`), including records already pruned
+from storage — not the number of rows currently held.
 
 An **app switcher** in the top bar (All apps | shop | blog | …) scopes every dashboard,
 chart, section, and exception view to the selected app, and alert rules can target one
@@ -241,6 +246,10 @@ server {
 The TCP ingest port (2407) is app-to-Daywatch traffic authenticated by token hash; expose
 it to your app servers only (private network / firewall), not the public internet.
 
+`GET /healthz` (no auth) returns `200 ok` only when Postgres answers within 2 seconds, and
+`503` otherwise — the container `HEALTHCHECK` uses it, so a Daywatch that is listening but
+cannot reach its database is reported unhealthy instead of quietly serving errors.
+
 Daywatch acknowledges a frame before storing its records, matching the official agent, so
 on `SIGTERM` it stops accepting connections and **drains in-flight batches** before
 exiting rather than dropping records the app was told had landed. Give it room to finish:
@@ -273,9 +282,13 @@ All settings are environment variables (see `.env.example` for the compose-level
 ## Development
 
 ```bash
-go test ./...                                  # unit tests (protocol framing, token hash)
+go test -race ./...                            # protocol framing, alerts, search, panel helpers
+gofmt -l . && go vet ./...
 DATABASE_URL=postgres://... go run ./cmd/daywatch
 ```
+
+CI runs exactly those three (`.github/workflows/go-checks.yml`), and both the GHCR image
+build and the release job depend on them, so a failing test blocks the artifact.
 
 The repository layout:
 

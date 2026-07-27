@@ -76,15 +76,33 @@ func (s *Store) SeedApp(ctx context.Context, name, token, tokenHash string) (boo
 	return tag.RowsAffected() > 0, nil
 }
 
-// ListApps returns all apps with per-app record stats.
+// ListApps returns all apps with per-app ingest stats.
+//
+// Counts come from the hourly rollups (a tiny table) plus recent records
+// read live, the same split CountsByType uses — a count(*) over every
+// record would scan the largest table in the database on each page load.
+// The live half covers the last two hour-buckets rather than just the
+// current one: the rollup ticker runs every five minutes, so a record that
+// just crossed an hour boundary is briefly in neither half, and the count
+// would visibly dip. Overlap is impossible because the two halves split on
+// the same boundary.
+//
+// Two consequences worth knowing: the total covers everything ingested
+// within the rollup window, including records already pruned from `records`,
+// and LastSeen is hour-granular outside the live window.
 func (s *Store) ListApps(ctx context.Context) ([]App, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.id, a.name, a.token, a.token_hash, a.created_at,
 		       coalesce(r.cnt, 0), coalesce(r.last_seen, to_timestamp(0))
 		FROM apps a
 		LEFT JOIN (
-			SELECT app, count(*) AS cnt, max(ts) AS last_seen
-			FROM records GROUP BY app
+			SELECT app, sum(cnt) AS cnt, max(seen) AS last_seen FROM (
+				SELECT app, cnt, bucket AS seen FROM rollups_hourly
+				WHERE bucket < date_trunc('hour', now()) - interval '1 hour'
+				UNION ALL
+				SELECT app, 1, ts FROM records
+				WHERE ts >= date_trunc('hour', now()) - interval '1 hour'
+			) t GROUP BY app
 		) r ON r.app = a.name
 		ORDER BY a.name`)
 	if err != nil {
