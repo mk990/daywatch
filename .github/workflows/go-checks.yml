@@ -1,0 +1,37 @@
+name: Go checks
+
+# Called by the workflows that publish artifacts, so nothing ships without
+# passing formatting, vet, and the test suite. Those callers already run on
+# pushes to master and on pull requests, so this has no trigger of its own —
+# adding one would just double every run.
+on:
+  workflow_call:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed for: $unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race catches the concurrency the ingest listener and SSE hub rely on.
+      - name: Test
+        run: go test -race ./...
