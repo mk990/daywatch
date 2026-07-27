@@ -132,6 +132,25 @@ func (s *Store) GetAlertRule(ctx context.Context, id int64) (*AlertRule, error) 
 	return &r, nil
 }
 
+// UpdateAlertRule rewrites an existing rule. Enabled is left alone — pausing
+// and resuming go through ToggleAlertRule — and the firing history is kept,
+// so an edited rule stays within its current cooldown.
+func (s *Store) UpdateAlertRule(ctx context.Context, r AlertRule) error {
+	if r.Kind == "" {
+		r.Kind = "threshold"
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE alert_rules SET
+			name = $2, kind = $3, app = $4, record_type = $5, status_class = $6,
+			threshold = $7, window_minutes = $8, cooldown_minutes = $9,
+			channel_url = $10, channel_format = $11, telegram_chat_id = $12,
+			auth_user = $13, auth_pass = $14
+		WHERE id = $1`,
+		r.ID, r.Name, r.Kind, r.App, r.RecordType, r.StatusClass, r.Threshold, r.WindowMinutes,
+		r.CooldownMinutes, r.ChannelURL, r.ChannelFormat, r.TelegramChatID, r.AuthUser, r.AuthPass)
+	return err
+}
+
 func (s *Store) ToggleAlertRule(ctx context.Context, id int64) error {
 	_, err := s.pool.Exec(ctx, `UPDATE alert_rules SET enabled = NOT enabled WHERE id = $1`, id)
 	return err
@@ -172,15 +191,40 @@ func (s *Store) CountMatching(ctx context.Context, r AlertRule, since time.Time)
 	return n, err
 }
 
-// LastFired returns the time the rule last fired (zero when never).
-func (s *Store) LastFired(ctx context.Context, ruleID int64) (time.Time, error) {
-	var t *time.Time
-	err := s.pool.QueryRow(ctx,
-		`SELECT max(fired_at) FROM alert_events WHERE rule_id = $1`, ruleID).Scan(&t)
-	if err != nil || t == nil {
-		return time.Time{}, err
+// RuleState summarizes a rule's firing history. The cooldown runs from the
+// last *delivered* notification, not the last attempt: an alert nobody
+// received should not silence the rule. Failures counts the undelivered
+// firings since that success, so the evaluator can back off an endpoint
+// that is down for good.
+type RuleState struct {
+	LastDelivered time.Time
+	LastAttempt   time.Time
+	Failures      int
+}
+
+func (s *Store) RuleState(ctx context.Context, ruleID int64) (RuleState, error) {
+	var st RuleState
+	var delivered, attempt *time.Time
+	err := s.pool.QueryRow(ctx, `
+		WITH ok AS (
+			SELECT max(fired_at) AS at FROM alert_events WHERE rule_id = $1 AND delivered
+		)
+		SELECT ok.at,
+		       (SELECT max(fired_at) FROM alert_events WHERE rule_id = $1),
+		       (SELECT count(*) FROM alert_events e
+		         WHERE e.rule_id = $1 AND NOT e.delivered
+		           AND (ok.at IS NULL OR e.fired_at > ok.at))
+		FROM ok`, ruleID).Scan(&delivered, &attempt, &st.Failures)
+	if err != nil {
+		return RuleState{}, err
 	}
-	return *t, nil
+	if delivered != nil {
+		st.LastDelivered = *delivered
+	}
+	if attempt != nil {
+		st.LastAttempt = *attempt
+	}
+	return st, nil
 }
 
 func (s *Store) InsertAlertEvent(ctx context.Context, e AlertEvent) error {

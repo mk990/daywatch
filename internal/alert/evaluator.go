@@ -71,12 +71,23 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 }
 
 func (e *Evaluator) evaluate(ctx context.Context, r store.AlertRule) error {
-	last, err := e.store.LastFired(ctx, r.ID)
+	st, err := e.store.RuleState(ctx, r.ID)
 	if err != nil {
 		return err
 	}
-	if !last.IsZero() && time.Since(last) < time.Duration(r.CooldownMinutes)*time.Minute {
+	cooldown := time.Duration(r.CooldownMinutes) * time.Minute
+	if !st.LastDelivered.IsZero() && time.Since(st.LastDelivered) < cooldown {
 		return nil // cooling down
+	}
+	// A failed delivery reached nobody, so it does not start the cooldown:
+	// the rule is retried instead. Consecutive failures back off up to the
+	// cooldown so a permanently broken endpoint is not retried every tick
+	// forever. Half an interval of slack keeps a backoff of N intervals
+	// landing on the Nth tick — the previous attempt is timestamped a few
+	// milliseconds past its own tick, so an exact comparison would miss
+	// every deadline and silently double each wait.
+	if st.Failures > 0 && time.Since(st.LastAttempt)+e.interval/2 < e.retryBackoff(st.Failures, cooldown) {
+		return nil
 	}
 
 	since := time.Now().Add(-time.Duration(r.WindowMinutes) * time.Minute)
@@ -92,9 +103,20 @@ func (e *Evaluator) evaluate(ctx context.Context, r store.AlertRule) error {
 	return nil
 }
 
+// retryBackoff spaces out delivery retries: one evaluation interval after
+// the first failure, doubling per consecutive failure, capped at the rule's
+// own cooldown.
+func (e *Evaluator) retryBackoff(failures int, cooldown time.Duration) time.Duration {
+	d := e.interval
+	for i := 1; i < failures && d < cooldown; i++ {
+		d *= 2
+	}
+	return min(d, cooldown)
+}
+
 // Fire delivers the notification and records the event. When test is true
-// the message is marked as a test and the event is still recorded, which
-// also starts the cooldown — callers use it to verify webhook wiring.
+// the message is marked as a test; a delivered test starts the cooldown
+// like any other firing — callers use it to verify webhook wiring.
 func (e *Evaluator) Fire(ctx context.Context, r store.AlertRule, matched int64, test bool) {
 	msg := e.message(r, matched, test)
 	deliverErr := e.deliver(ctx, r, msg)

@@ -177,6 +177,16 @@ a.mono, .mono { font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; f
   min-width: 240px;
 }
 .filters input.short { min-width: 110px; }
+.filters label.deep {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: help;
+  user-select: none;
+}
+.filters label.deep input { min-width: 0; padding: 0; accent-color: var(--accent); }
 .filters button {
   background: var(--accent);
   color: var(--bg);
@@ -362,6 +372,7 @@ td.actions form { display: inline-block; margin-left: 4px; }
   font-size: 12px;
   cursor: pointer;
 }
+a.btn-sm { display: inline-block; text-decoration: none; }
 .btn-sm:hover { border-color: var(--accent); }
 .btn-sm.danger:hover { border-color: var(--err); color: var(--err); }
 tr.dim { opacity: .5; }

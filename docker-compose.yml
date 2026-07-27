@@ -16,6 +16,9 @@ services:
       DW_ROLLUP_DAYS: ${DW_ROLLUP_DAYS:-90}
       DW_BASE_URL: ${DW_BASE_URL:-}
       TZ: ${TZ:-UTC}
+    # On SIGTERM the ingest listener drains in-flight batches before exiting;
+    # give it more than Docker's 10s default so acknowledged records land.
+    stop_grace_period: 40s
     depends_on:
       db:
         condition: service_healthy

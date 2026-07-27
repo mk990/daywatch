@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 
@@ -30,6 +31,10 @@ CREATE TABLE IF NOT EXISTS records (
     received_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE records ADD COLUMN IF NOT EXISTS app TEXT NOT NULL DEFAULT '';
+-- summary is the record's most descriptive payload field, extracted on
+-- ingest so search hits a small indexed column instead of casting every
+-- JSONB payload to text. Adding it with a default is metadata-only.
+ALTER TABLE records ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS records_type_ts_idx ON records (type, ts DESC);
 CREATE INDEX IF NOT EXISTS records_trace_idx   ON records (trace_id) WHERE trace_id <> '';
 CREATE INDEX IF NOT EXISTS records_group_idx   ON records (type, group_hash, ts DESC) WHERE group_hash <> '';
@@ -37,6 +42,18 @@ CREATE INDEX IF NOT EXISTS records_ts_idx      ON records (ts);
 CREATE INDEX IF NOT EXISTS records_app_idx     ON records (app, type, ts DESC) WHERE app <> '';
 CREATE INDEX IF NOT EXISTS records_user_idx    ON records (user_id, ts DESC) WHERE user_id <> '';
 CREATE INDEX IF NOT EXISTS records_slow_idx    ON records (type, duration DESC) WHERE duration > 0;
+-- Tiny partial index: it only covers rows still awaiting a summary, so the
+-- startup backfill can find them without scanning the table.
+CREATE INDEX IF NOT EXISTS records_nosummary_idx ON records (id) WHERE summary = '';
+`
+
+// searchSchema needs pg_trgm, which is a trusted extension on PostgreSQL 13+
+// but may be unavailable on managed instances. It is applied separately so a
+// failure degrades search to a scan of the (small) summary column instead of
+// breaking startup.
+const searchSchema = `
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS records_summary_trgm_idx ON records USING gin (summary gin_trgm_ops);
 `
 
 // Record is one Nightwatch event with hot columns extracted from the raw payload.
@@ -53,6 +70,7 @@ type Record struct {
 	Stage    string
 	Duration int64
 	Status   string
+	Summary  string
 	Data     map[string]any
 }
 
@@ -105,7 +123,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.migrateRollups(ctx); err != nil {
 		return err
 	}
-	return s.migrateAlerts(ctx)
+	if err := s.migrateAlerts(ctx); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, searchSchema); err != nil {
+		s.log.Warn("pg_trgm unavailable: search will scan the summary column instead of using an index", "error", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() { s.pool.Close() }
@@ -131,7 +155,7 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app st
 		}
 		rows = append(rows, []any{
 			app, rec.Type, rec.TS, rec.TraceID, rec.Group, rec.UserID,
-			rec.Deploy, rec.Server, rec.Stage, rec.Duration, rec.Status, r,
+			rec.Deploy, rec.Server, rec.Stage, rec.Duration, rec.Status, rec.Summary, r,
 		})
 	}
 	if len(rows) == 0 {
@@ -140,7 +164,7 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app st
 
 	n, err := s.pool.CopyFrom(ctx,
 		pgx.Identifier{"records"},
-		[]string{"app", "type", "ts", "trace_id", "group_hash", "user_id", "deploy", "server", "stage", "duration", "status", "data"},
+		[]string{"app", "type", "ts", "trace_id", "group_hash", "user_id", "deploy", "server", "stage", "duration", "status", "summary", "data"},
 		pgx.CopyFromRows(rows),
 	)
 	if err == nil {
@@ -172,6 +196,7 @@ func extract(m map[string]any) Record {
 		rec.UserID = str(m["id"])
 	}
 	rec.Duration = i64(m["duration"])
+	rec.Summary = summarize(m)
 	switch rec.Type {
 	case "request", "outgoing-request":
 		rec.Status = str(m["status_code"])
@@ -199,6 +224,51 @@ func extract(m map[string]any) Record {
 		}
 	}
 	return rec
+}
+
+// summaryKeys are checked in order; the first non-empty one describes the
+// record. summaryMax bounds what lands in the trigram index.
+var summaryKeys = []string{"url", "sql", "message", "name", "class", "key", "id"}
+
+const summaryMax = 500
+
+// summarize picks the most descriptive payload field for search and list
+// labels. summarySQL below computes the same value for rows that predate
+// the column; keep the two in step.
+func summarize(m map[string]any) string {
+	for _, key := range summaryKeys {
+		v := str(m[key])
+		if v == "" {
+			continue
+		}
+		if key == "url" {
+			if method := str(m["method"]); method != "" {
+				v = method + " " + v
+			}
+		}
+		return truncRunes(v, summaryMax)
+	}
+	return ""
+}
+
+// summarySQL is summarize() in SQL, over a records row aliased "r". left()
+// counts characters, matching truncRunes.
+const summarySQL = `left(coalesce(
+	CASE WHEN r.data->>'url' <> '' THEN trim(concat_ws(' ', nullif(r.data->>'method', ''), r.data->>'url')) END,
+	nullif(r.data->>'sql', ''), nullif(r.data->>'message', ''), nullif(r.data->>'name', ''),
+	nullif(r.data->>'class', ''), nullif(r.data->>'key', ''), nullif(r.data->>'id', ''),
+	''), 500)`
+
+// truncRunes cuts to at most n runes, never splitting a multi-byte character.
+func truncRunes(s string, n int) string {
+	if len(s) <= n { // n bytes is a lower bound on n runes
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 func parseTimestamp(v any) time.Time {
@@ -243,6 +313,38 @@ func i64(v any) int64 {
 		return n
 	}
 	return 0
+}
+
+// BackfillSummaries fills the summary column for rows ingested before it
+// existed, walking id-descending in bounded batches so ingest keeps running
+// throughout. Rows whose payload has no summarizable field are scanned but
+// never written, so repeated runs are read-only once the work is done.
+func (s *Store) BackfillSummaries(ctx context.Context) (int64, error) {
+	const batch = 5000
+	q := fmt.Sprintf(`
+		WITH b AS (
+			SELECT r.id, %s AS s FROM records r
+			WHERE r.id < $1 AND r.summary = ''
+			ORDER BY r.id DESC LIMIT %d
+		), upd AS (
+			UPDATE records t SET summary = b.s FROM b WHERE t.id = b.id AND b.s <> ''
+			RETURNING 1
+		)
+		SELECT coalesce(min(b.id), 0), count(*), (SELECT count(*) FROM upd) FROM b`, summarySQL, batch)
+
+	var total int64
+	cursor := int64(math.MaxInt64)
+	for {
+		var minID, scanned, updated int64
+		if err := s.pool.QueryRow(ctx, q, cursor).Scan(&minID, &scanned, &updated); err != nil {
+			return total, err
+		}
+		total += updated
+		if scanned == 0 {
+			return total, nil
+		}
+		cursor = minID
+	}
 }
 
 // Prune deletes records older than the retention window. It deletes in

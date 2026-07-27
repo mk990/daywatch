@@ -83,6 +83,30 @@ func TestDeliverFormats(t *testing.T) {
 	}
 }
 
+func TestRetryBackoff(t *testing.T) {
+	e := testEvaluator("")
+	e.interval = 30 * time.Second
+	cooldown := 15 * time.Minute
+
+	cases := []struct {
+		failures int
+		want     time.Duration
+	}{
+		{1, 30 * time.Second}, // retry on the next evaluation
+		{2, time.Minute},
+		{3, 2 * time.Minute},
+		{6, 16 * time.Minute},  // doubling would overshoot…
+		{20, 15 * time.Minute}, // …so it is capped at the cooldown
+	}
+	for _, c := range cases {
+		got := e.retryBackoff(c.failures, cooldown)
+		want := min(c.want, cooldown)
+		if got != want {
+			t.Errorf("retryBackoff(%d) = %v, want %v", c.failures, got, want)
+		}
+	}
+}
+
 func TestDeliverNtfy(t *testing.T) {
 	var (
 		body    string

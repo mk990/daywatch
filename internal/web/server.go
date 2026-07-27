@@ -156,6 +156,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /apps/{id}/regenerate", s.handleAppRegenerate)
 	mux.HandleFunc("GET /alerts", s.handleAlerts)
 	mux.HandleFunc("POST /alerts", s.handleAlertCreate)
+	mux.HandleFunc("GET /alerts/{id}/edit", s.handleAlertEdit)
+	mux.HandleFunc("POST /alerts/{id}", s.handleAlertUpdate)
 	mux.HandleFunc("POST /alerts/{id}/toggle", s.handleAlertToggle)
 	mux.HandleFunc("POST /alerts/{id}/delete", s.handleAlertDelete)
 	mux.HandleFunc("POST /alerts/{id}/test", s.handleAlertTest)
@@ -415,6 +417,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		UserID:      q.Get("user"),
 		Group:       q.Get("group"),
 		Search:      q.Get("search"),
+		DeepSearch:  q.Get("deep") == "1",
 		SortSlowest: sortSlowest,
 		Limit:       perPage,
 		Offset:      (page - 1) * perPage,
@@ -483,6 +486,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		"Groups":     groups,
 		"SlowGroups": slowGroups,
 		"Search":     q.Get("search"),
+		"Deep":       q.Get("deep") == "1",
 		"Status":     q.Get("status"),
 		"GroupParam": q.Get("group"),
 		"Slowest":    sortSlowest,
@@ -542,8 +546,12 @@ var wfClasses = map[string]string{
 	"log":              "wf-log",
 }
 
-// recordSummary picks the most descriptive payload field for a record.
+// recordSummary is the record's descriptive label. Records ingested since
+// the summary column was added carry it; older ones are derived on the fly.
 func recordSummary(rec store.Record) string {
+	if rec.Summary != "" {
+		return rec.Summary
+	}
 	for _, key := range []string{"url", "sql", "message", "name", "class", "key", "id"} {
 		if v := anyToString(rec.Data[key]); v != "" {
 			if key == "url" {

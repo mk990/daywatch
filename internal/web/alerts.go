@@ -22,6 +22,52 @@ func (s *Server) SetAlertTester(t AlertTester) { s.alertTester = t }
 
 var alertFormats = []string{"json", "slack", "discord", "telegram", "ntfy"}
 
+// alertForm backs the shared create/edit rule form. Rule carries the values
+// to prefill; its AuthPass is always cleared before rendering so a stored
+// secret never reaches the page — HasAuth says whether one exists.
+type alertForm struct {
+	Rule    store.AlertRule
+	Action  string
+	Submit  string
+	Edit    bool
+	HasAuth bool
+	Types   []Section
+	Apps    []string
+	Formats []string
+}
+
+func (s *Server) alertForm(apps []string, rule store.AlertRule, edit bool) alertForm {
+	f := alertForm{
+		Rule:    rule,
+		Action:  "/alerts",
+		Submit:  "Create rule",
+		Edit:    edit,
+		HasAuth: rule.AuthUser != "" || rule.AuthPass != "",
+		Types:   s.sections,
+		Apps:    apps,
+		Formats: alertFormats,
+	}
+	if edit {
+		f.Action = "/alerts/" + strconv.FormatInt(rule.ID, 10)
+		f.Submit = "Save changes"
+	}
+	f.Rule.AuthPass = ""
+	return f
+}
+
+// newRuleDefaults prefills the create form.
+func newRuleDefaults(app string) store.AlertRule {
+	return store.AlertRule{
+		Kind:            "threshold",
+		App:             app,
+		StatusClass:     "err",
+		Threshold:       5,
+		WindowMinutes:   5,
+		CooldownMinutes: 15,
+		ChannelFormat:   alertFormats[0],
+	}
+}
+
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	base, _ := s.base(r, "alerts")
 
@@ -42,25 +88,37 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "alerts.html", map[string]any{
-		"Base":    base,
-		"Rules":   rules,
-		"Events":  events,
-		"Types":   s.sections,
-		"Apps":    apps,
-		"Formats": alertFormats,
-		"Error":   r.URL.Query().Get("error"),
+		"Base":   base,
+		"Rules":  rules,
+		"Events": events,
+		"Form":   s.alertForm(apps, newRuleDefaults(base.App), false),
+		"Error":  r.URL.Query().Get("error"),
 	})
 }
 
-func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/alerts?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+func (s *Server) handleAlertEdit(w http.ResponseWriter, r *http.Request) {
+	rule := s.alertRuleFromPath(w, r)
+	if rule == nil {
 		return
 	}
+	apps, err := s.store.AppNames(r.Context())
+	if err != nil {
+		httpError(w, s.log, err)
+		return
+	}
+	base, _ := s.base(r, "alerts")
+	s.render(w, "alert_edit.html", map[string]any{
+		"Base":  base,
+		"Form":  s.alertForm(apps, *rule, true),
+		"Error": r.URL.Query().Get("error"),
+	})
+}
 
+// ruleFromForm reads the shared rule form. It does not set ID or Enabled,
+// which the create and update paths own.
+func ruleFromForm(r *http.Request) store.AlertRule {
 	rule := store.AlertRule{
 		Name:            strings.TrimSpace(r.PostFormValue("name")),
-		Enabled:         true,
 		Kind:            r.PostFormValue("kind"),
 		App:             r.PostFormValue("app"),
 		RecordType:      r.PostFormValue("record_type"),
@@ -74,7 +132,6 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 		AuthUser:        strings.TrimSpace(r.PostFormValue("auth_user")),
 		AuthPass:        r.PostFormValue("auth_pass"),
 	}
-
 	// New-exception rules fire on any new group; the threshold/type/class
 	// fields don't apply.
 	if rule.Kind == "new-exception" {
@@ -82,23 +139,88 @@ func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
 		rule.RecordType = "exception"
 		rule.StatusClass = ""
 	}
+	return rule
+}
 
+// mergeAuth carries stored credentials across an edit. The password field is
+// never prefilled — it cannot be, without exposing the secret — so an empty
+// one means "keep what is stored"; clearing them takes an explicit checkbox.
+func mergeAuth(rule, existing store.AlertRule, clear bool) store.AlertRule {
+	if clear {
+		rule.AuthUser, rule.AuthPass = "", ""
+		return rule
+	}
+	if rule.AuthPass == "" {
+		rule.AuthPass = existing.AuthPass
+	}
+	return rule
+}
+
+// checkRule validates a rule, resolving the app filter against registered
+// apps. It returns a user-facing message, or "" when the rule is good.
+func (s *Server) checkRule(ctx context.Context, rule store.AlertRule) (string, error) {
 	if rule.App != "" {
-		apps, err := s.store.AppNames(r.Context())
+		apps, err := s.store.AppNames(ctx)
 		if err != nil {
-			httpError(w, s.log, err)
-			return
+			return "", err
 		}
 		if !slices.Contains(apps, rule.App) {
-			http.Redirect(w, r, "/alerts?error="+url.QueryEscape("unknown app"), http.StatusSeeOther)
-			return
+			return "unknown app", nil
 		}
 	}
-	if msg := validateRule(rule); msg != "" {
+	return validateRule(rule), nil
+}
+
+func (s *Server) handleAlertCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/alerts?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	rule := ruleFromForm(r)
+	rule.Enabled = true
+
+	msg, err := s.checkRule(r.Context(), rule)
+	if err != nil {
+		httpError(w, s.log, err)
+		return
+	}
+	if msg != "" {
 		http.Redirect(w, r, "/alerts?error="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	if err := s.store.CreateAlertRule(r.Context(), rule); err != nil {
+		httpError(w, s.log, err)
+		return
+	}
+	http.Redirect(w, r, "/alerts", http.StatusSeeOther)
+}
+
+func (s *Server) handleAlertUpdate(w http.ResponseWriter, r *http.Request) {
+	existing := s.alertRuleFromPath(w, r)
+	if existing == nil {
+		return
+	}
+	editURL := "/alerts/" + strconv.FormatInt(existing.ID, 10) + "/edit"
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, editURL+"?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+
+	rule := ruleFromForm(r)
+	rule.ID = existing.ID
+	rule.Enabled = existing.Enabled // paused/active is the toggle button's job
+	rule = mergeAuth(rule, *existing, r.PostFormValue("clear_auth") == "1")
+
+	msg, err := s.checkRule(r.Context(), rule)
+	if err != nil {
+		httpError(w, s.log, err)
+		return
+	}
+	if msg != "" {
+		http.Redirect(w, r, editURL+"?error="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	if err := s.store.UpdateAlertRule(r.Context(), rule); err != nil {
 		httpError(w, s.log, err)
 		return
 	}

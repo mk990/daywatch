@@ -128,6 +128,22 @@ Env variables still work as a **first-boot seed**: `NIGHTWATCH_TOKEN` registers 
 named `default`, and `DW_APPS=shop:token-a,blog:token-b` registers several. They are
 inserted only if the name is free — after that, the panel is the source of truth.
 
+## Search
+
+Every section page has a search box. It matches each record's **summary** — the most
+descriptive field of its payload (`METHOD url` for requests, the SQL for queries, the
+message for exceptions and logs, the job or command name), extracted on ingest into an
+indexed column. Daywatch creates a `pg_trgm` GIN index over it at startup; if the
+extension is unavailable the search still works, just without index support.
+
+Tick **deep** next to the box to search the entire raw payload instead — any field of any
+record, including ones the summary doesn't cover. Nothing can index that (every matching
+row's JSONB is cast to text), so keep the time range tight when you use it.
+
+Records ingested before this feature get their summary from a batched backfill that runs
+at startup and reports `summary backfill complete` when done; ingest keeps running
+throughout.
+
 ## Exception triage
 
 The **Exceptions** page groups identical exceptions (by the package's `_group` hash) with
@@ -156,8 +172,17 @@ incoming records, e.g. *"≥5 error requests in 5 minutes"*:
   `telegram` (needs a chat ID; point the URL at `https://api.telegram.org/bot<TOKEN>/sendMessage`),
   or `ntfy` (see below).
 - **Cooldown** silences a rule after it fires so a sustained incident doesn't spam you.
+  It runs from the last *delivered* notification: if the channel is unreachable the alert
+  reached nobody, so the rule is retried on the next evaluation instead of going quiet.
+  The first failure is retried on the next evaluation, and further consecutive failures
+  back off (30s, 1m, 2m, … up to the cooldown), so an endpoint that is down for good is
+  not hammered every 30 seconds.
 - Every firing is recorded in the history table with its delivery status; a **test** button
   sends a `[TEST]` notification immediately to verify the wiring.
+- **Edit** reopens a rule in the same form. Its firing history and paused/active state are
+  kept, so an edited rule stays within its current cooldown. Stored channel passwords are
+  never rendered back into the page: leave the password field blank to keep the saved one,
+  or tick **clear credentials** to remove it.
 
 Set `DW_BASE_URL` (e.g. `https://daywatch.example.com`) to include a panel link in
 notifications.
@@ -215,6 +240,12 @@ server {
 
 The TCP ingest port (2407) is app-to-Daywatch traffic authenticated by token hash; expose
 it to your app servers only (private network / firewall), not the public internet.
+
+Daywatch acknowledges a frame before storing its records, matching the official agent, so
+on `SIGTERM` it stops accepting connections and **drains in-flight batches** before
+exiting rather than dropping records the app was told had landed. Give it room to finish:
+the compose file sets `stop_grace_period: 40s`, and any other supervisor (systemd's
+`TimeoutStopSec`, Kubernetes' `terminationGracePeriodSeconds`) should allow the same.
 
 Login attempts are rate-limited per IP (5 failures / 15 minutes → temporary lockout) on
 top of a constant-time credential check. Note that app ingest tokens are stored in

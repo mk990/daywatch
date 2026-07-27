@@ -62,9 +62,14 @@
   <form method="get" class="filters">
     <input type="hidden" name="range" value="{{.Base.Range}}">
     {{if .Base.App}}<input type="hidden" name="app" value="{{.Base.App}}">{{end}}
+    {{if .Base.Stage}}<input type="hidden" name="stage" value="{{.Base.Stage}}">{{end}}
     {{if .GroupParam}}<input type="hidden" name="group" value="{{.GroupParam}}">{{end}}
     {{if .Window}}<input type="hidden" name="from" value="{{.FromParam}}"><input type="hidden" name="to" value="{{.ToParam}}">{{end}}
-    <input type="search" name="search" placeholder="Search payload…" value="{{.Search}}">
+    <input type="search" name="search" placeholder="Search…" value="{{.Search}}"
+           title="Matches the record summary: URL, SQL, message, job or command name.">
+    <label class="deep" title="Also search every field of the raw payload. No index can serve this, so it is slow on large ranges.">
+      <input type="checkbox" name="deep" value="1" {{if .Deep}}checked{{end}}> deep
+    </label>
     {{if .Section.StatusLabel}}<input type="text" name="status" placeholder="{{.Section.StatusLabel}}" value="{{.Status}}" class="short">{{end}}
     {{if .Slowest}}<input type="hidden" name="sort" value="slowest">{{end}}
     <button type="submit">Filter</button>

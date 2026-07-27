@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,12 +42,21 @@ type Server struct {
 	sink        Sink
 	log         *slog.Logger
 	ln          net.Listener
+	// inFlight tracks connection handlers so shutdown can drain them: a
+	// frame is acknowledged before its records are stored, so exiting while
+	// a handler is mid-insert loses records the sender believes landed.
+	wg       sync.WaitGroup
+	inFlight atomic.Int64
 }
 
 const (
 	payloadVersion = "v1"
 	maxFrameSize   = 64 << 20 // 64 MiB safety cap
 	ack            = "2:OK"
+	// insertTimeout bounds a single batch insert, and drainTimeout gives
+	// those inserts room to finish during shutdown.
+	insertTimeout = 30 * time.Second
+	drainTimeout  = insertTimeout + 5*time.Second
 )
 
 func New(addr string, resolver AppResolver, readTimeout time.Duration, sink Sink, log *slog.Logger) *Server {
@@ -63,6 +74,9 @@ func (s *Server) Listen() error {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	// However the accept loop ends — shutdown or a listener error — the
+	// handlers it started still have records to store.
+	defer s.drain()
 	go func() {
 		<-ctx.Done()
 		s.ln.Close()
@@ -75,11 +89,34 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return err
 		}
+		s.wg.Add(1)
+		s.inFlight.Add(1)
 		go s.handle(ctx, conn)
 	}
 }
 
+// drain waits for accepted connections to finish storing their records.
+// Frames are acknowledged before the insert completes, so returning early
+// would drop records the sending app has already been told were delivered.
+func (s *Server) drain() {
+	if n := s.inFlight.Load(); n > 0 {
+		s.log.Info("draining ingest connections", "in_flight", n)
+	}
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(drainTimeout):
+		s.log.Warn("ingest drain timed out, records may be lost", "in_flight", s.inFlight.Load())
+	}
+}
+
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
+	defer s.wg.Done()
+	defer s.inFlight.Add(-1)
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(s.readTimeout))
 
@@ -124,7 +161,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	insertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	insertCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), insertTimeout)
 	defer cancel()
 	n, err := s.sink.InsertRecords(insertCtx, records, app)
 	if err != nil {

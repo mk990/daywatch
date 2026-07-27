@@ -119,6 +119,17 @@ func main() {
 		}
 	})
 	g.Go(func() error {
+		// Rows ingested before the summary column existed are not searchable
+		// until they have one. Batched, so ingest keeps running.
+		n, err := st.BackfillSummaries(gctx)
+		if err != nil {
+			log.Warn("summary backfill failed", "error", err)
+		} else if n > 0 {
+			log.Info("summary backfill complete", "rows", n)
+		}
+		return nil
+	})
+	g.Go(func() error {
 		if cfg.RetentionDays <= 0 {
 			return nil
 		}

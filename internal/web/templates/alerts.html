@@ -6,73 +6,7 @@
 
 <div class="card">
   <h2>New rule</h2>
-  <form method="post" action="/alerts" class="alert-form">
-    <div class="form-row">
-      <label>Name
-        <input type="text" name="name" placeholder="Too many 5xx errors" required>
-      </label>
-      <label>Condition
-        <select name="kind" id="alert-kind">
-          <option value="threshold">record count threshold</option>
-          <option value="new-exception">new exception appears</option>
-        </select>
-      </label>
-      {{if .Apps}}
-      <label>App
-        <select name="app">
-          <option value="">all apps</option>
-          {{range .Apps}}<option value="{{.}}" {{if eq . $.Base.App}}selected{{end}}>{{.}}</option>{{end}}
-        </select>
-      </label>
-      {{end}}
-      <label class="threshold-only">Record type
-        <select name="record_type">
-          <option value="">any</option>
-          {{range .Types}}<option value="{{.Type}}">{{.Title}}</option>{{end}}
-        </select>
-      </label>
-      <label class="threshold-only">Severity
-        <select name="status_class">
-          <option value="err">errors only</option>
-          <option value="warn">warnings only</option>
-          <option value="">any record</option>
-        </select>
-      </label>
-      <label class="threshold-only">Threshold (≥)
-        <input type="number" name="threshold" value="5" min="1">
-      </label>
-      <label>Window (min)
-        <input type="number" name="window_minutes" value="5" min="1" max="1440">
-      </label>
-      <label>Cooldown (min)
-        <input type="number" name="cooldown_minutes" value="15" min="1">
-      </label>
-    </div>
-    <div class="form-row">
-      <label class="grow">Webhook URL
-        <input type="url" name="channel_url" id="alert-url" placeholder="https://hooks.slack.com/services/… or any endpoint" required>
-      </label>
-      <label>Format
-        <select name="channel_format" id="alert-format">
-          {{range .Formats}}<option value="{{.}}">{{.}}</option>{{end}}
-        </select>
-      </label>
-      <label id="tg-chat" hidden>Telegram chat ID
-        <input type="text" name="telegram_chat_id" placeholder="-100123456789">
-      </label>
-      <button type="submit">Create rule</button>
-    </div>
-    <div class="form-row" id="alert-auth" hidden>
-      <label>Username
-        <input type="text" name="auth_user" autocomplete="off" placeholder="optional">
-      </label>
-      <label>Password / token
-        <input type="password" name="auth_pass" autocomplete="new-password" placeholder="optional">
-      </label>
-      <span class="hint">Basic auth for a self-hosted endpoint. Leave the username empty to send the
-        password as a bearer token (ntfy access token, <code>tk_…</code>).</span>
-    </div>
-  </form>
+  {{template "alertform" .Form}}
 </div>
 
 <div class="card">
@@ -97,6 +31,7 @@
       <td class="mono small">{{.ChannelFormat}} → {{printf "%.48s" .ChannelURL}}</td>
       <td>{{if .Enabled}}<span class="badge ok">active</span>{{else}}<span class="badge">paused</span>{{end}}</td>
       <td class="actions">
+        <a class="btn-sm" href="/alerts/{{.ID}}/edit">edit</a>
         <form method="post" action="/alerts/{{.ID}}/test"><button class="btn-sm" title="Send test notification">test</button></form>
         <form method="post" action="/alerts/{{.ID}}/toggle"><button class="btn-sm">{{if .Enabled}}pause{{else}}resume{{end}}</button></form>
         <form method="post" action="/alerts/{{.ID}}/delete" onsubmit="return confirm('Delete rule {{.Name}}?')"><button class="btn-sm danger">delete</button></form>
@@ -131,37 +66,5 @@
   <p class="empty">No alerts have fired yet.</p>
   {{end}}
 </div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  const fmt = document.getElementById('alert-format');
-  const tg = document.getElementById('tg-chat');
-  const auth = document.getElementById('alert-auth');
-  const url = document.getElementById('alert-url');
-  if (fmt && tg && auth) {
-    const sync = () => {
-      tg.hidden = fmt.value !== 'telegram';
-      auth.hidden = fmt.value === 'slack' || fmt.value === 'discord' || fmt.value === 'telegram';
-      if (url) {
-        url.placeholder = fmt.value === 'ntfy'
-          ? 'https://ntfy.example.com/daywatch'
-          : 'https://hooks.slack.com/services/… or any endpoint';
-      }
-    };
-    fmt.addEventListener('change', sync);
-    sync();
-  }
-  const kind = document.getElementById('alert-kind');
-  if (kind) {
-    const sync = () => {
-      document.querySelectorAll('.threshold-only').forEach((el) => {
-        el.hidden = kind.value !== 'threshold';
-      });
-    };
-    kind.addEventListener('change', sync);
-    sync();
-  }
-});
-</script>
 
 {{template "footer" .Base}}

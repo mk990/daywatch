@@ -17,9 +17,13 @@ type ListFilter struct {
 	Group   string
 	UserID  string
 	Status  string
-	Search  string // matched against data::text
-	Since   time.Time
-	Until   time.Time
+	// Search matches the extracted summary column, which is trigram-indexed.
+	Search string
+	// DeepSearch widens Search to the whole raw payload. No index can serve
+	// it — every matching row's JSONB is cast to text — so it is opt-in.
+	DeepSearch bool
+	Since      time.Time
+	Until      time.Time
 	// SortSlowest orders by duration descending instead of newest first.
 	SortSlowest bool
 	Limit       int
@@ -55,7 +59,11 @@ func (f ListFilter) where() (string, []any) {
 		add("status = $%d", f.Status)
 	}
 	if f.Search != "" {
-		add("data::text ILIKE $%d", "%"+f.Search+"%")
+		if f.DeepSearch {
+			add("data::text ILIKE $%d", "%"+f.Search+"%")
+		} else {
+			add("summary ILIKE $%d", "%"+f.Search+"%")
+		}
 	}
 	if !f.Since.IsZero() {
 		add("ts >= $%d", f.Since)
@@ -70,10 +78,17 @@ func (f ListFilter) where() (string, []any) {
 }
 
 // optEq returns " AND col = $n" (appending val to args) when val is non-empty,
-// and "" otherwise. Building the condition only when needed — instead of
-// "($n = '' OR col = $n)" — matters under pgx's prepared statements: a generic
-// plan cannot fold "$n = ''" into a constant, so the OR form blocks partial
+// and "" otherwise. Building the condition only when needed — instead of the
+// usual
+//
+//	($n = '' OR col = $n)
+//
+// — matters under pgx's prepared statements: a generic plan cannot fold that
+// empty-string comparison into a constant, so the OR form blocks partial
 // indexes like records_app_idx and is evaluated per row.
+//
+// (The SQL stays in a code block so gofmt does not read its quoting as
+// typographic markup and rewrite it.)
 func optEq(args *[]any, col, val string) string {
 	if val == "" {
 		return ""
@@ -91,7 +106,7 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 	if f.SortSlowest {
 		orderBy = "duration DESC, id DESC"
 	}
-	q := fmt.Sprintf(`SELECT id, app, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
+	q := fmt.Sprintf(`SELECT id, app, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, summary, data
 		FROM records %s ORDER BY %s LIMIT %d OFFSET %d`, where, orderBy, f.Limit, f.Offset)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -104,7 +119,7 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Record, error) {
 		var r Record
 		var data []byte
 		if err := rows.Scan(&r.ID, &r.App, &r.Type, &r.TS, &r.TraceID, &r.Group, &r.UserID,
-			&r.Deploy, &r.Server, &r.Stage, &r.Duration, &r.Status, &data); err != nil {
+			&r.Deploy, &r.Server, &r.Stage, &r.Duration, &r.Status, &r.Summary, &data); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(data, &r.Data); err != nil {
@@ -130,12 +145,12 @@ func (s *Store) Count(ctx context.Context, f ListFilter) (int64, error) {
 }
 
 func (s *Store) Get(ctx context.Context, id int64) (*Record, error) {
-	row := s.pool.QueryRow(ctx, `SELECT id, app, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, data
+	row := s.pool.QueryRow(ctx, `SELECT id, app, type, ts, trace_id, group_hash, user_id, deploy, server, stage, duration, status, summary, data
 		FROM records WHERE id = $1`, id)
 	var r Record
 	var data []byte
 	if err := row.Scan(&r.ID, &r.App, &r.Type, &r.TS, &r.TraceID, &r.Group, &r.UserID,
-		&r.Deploy, &r.Server, &r.Stage, &r.Duration, &r.Status, &data); err != nil {
+		&r.Deploy, &r.Server, &r.Stage, &r.Duration, &r.Status, &r.Summary, &data); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(data, &r.Data); err != nil {
