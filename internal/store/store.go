@@ -146,6 +146,7 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app string) (int, error) {
 	rows := make([][]any, 0, len(raw))
 	var exceptionGroups []string
+	var exceptionStages []string
 	for _, r := range raw {
 		var m map[string]any
 		if err := json.Unmarshal(r, &m); err != nil {
@@ -159,6 +160,7 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app st
 		}
 		if rec.Type == "exception" && rec.Group != "" {
 			exceptionGroups = append(exceptionGroups, rec.Group)
+			exceptionStages = append(exceptionStages, rec.Stage)
 		}
 		rows = append(rows, []any{
 			app, rec.Type, rec.TS, rec.TraceID, rec.Group, rec.UserID,
@@ -176,7 +178,7 @@ func (s *Store) InsertRecords(ctx context.Context, raw []json.RawMessage, app st
 	)
 	if err == nil {
 		// A recurring exception reopens its group if it had been resolved.
-		if rerr := s.reopenResolved(ctx, exceptionGroups); rerr != nil {
+		if rerr := s.reopenResolved(ctx, app, exceptionGroups, exceptionStages); rerr != nil {
 			s.log.Warn("reopen resolved exceptions failed", "error", rerr)
 		}
 	}

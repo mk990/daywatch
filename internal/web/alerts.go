@@ -81,13 +81,9 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	apps, err := s.store.AppNames(r.Context())
-	if err != nil {
-		httpError(w, s.log, err)
-		return
-	}
+	apps, _ := s.scopes(r.Context())
 
-	s.render(w, "alerts.html", map[string]any{
+	s.render(w, r, "alerts.html", map[string]any{
 		"Base":   base,
 		"Rules":  rules,
 		"Events": events,
@@ -101,13 +97,9 @@ func (s *Server) handleAlertEdit(w http.ResponseWriter, r *http.Request) {
 	if rule == nil {
 		return
 	}
-	apps, err := s.store.AppNames(r.Context())
-	if err != nil {
-		httpError(w, s.log, err)
-		return
-	}
+	apps, _ := s.scopes(r.Context())
 	base, _ := s.base(r, "alerts")
-	s.render(w, "alert_edit.html", map[string]any{
+	s.render(w, r, "alert_edit.html", map[string]any{
 		"Base":  base,
 		"Form":  s.alertForm(apps, *rule, true),
 		"Error": r.URL.Query().Get("error"),

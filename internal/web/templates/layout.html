@@ -13,7 +13,11 @@
 </head>
 <body>
 <div class="app">
-<aside class="sidebar">
+<button id="mobile-menu" class="mobile-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Open navigation">
+  {{icon "menu"}}
+</button>
+<div id="nav-shade" class="nav-shade" aria-hidden="true"></div>
+<aside id="sidebar" class="sidebar">
   <a class="brand" href="/">{{icon "sun"}} Daywatch</a>
   <nav>
     <a href="/?range={{.Range}}{{.ScopeQS}}" class="{{if eq .ActiveSlug ""}}active{{end}}">{{icon "gauge"}} Dashboard</a>

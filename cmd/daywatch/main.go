@@ -21,13 +21,13 @@ import (
 // notifyingSink stores records and then signals the live-update hub.
 type notifyingSink struct {
 	store *store.Store
-	hub   *web.Hub
+	panel *web.Server
 }
 
 func (s *notifyingSink) InsertRecords(ctx context.Context, records []json.RawMessage, app string) (int, error) {
 	n, err := s.store.InsertRecords(ctx, records, app)
 	if err == nil && n > 0 {
-		s.hub.Notify()
+		s.panel.Notify()
 	}
 	return n, err
 }
@@ -73,11 +73,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	evaluator := alert.New(st, log, cfg.BaseURL, panel.Hub())
+	evaluator := alert.New(st, log, cfg.BaseURL, panel)
 	panel.SetAlertTester(evaluator)
 
 	// Wrap the store so every successful ingest wakes live-reload clients.
-	sink := &notifyingSink{store: st, hub: panel.Hub()}
+	sink := &notifyingSink{store: st, panel: panel}
 	ing := ingest.New(cfg.IngestAddr, st, cfg.ReadTimeout, sink, log)
 	if err := ing.Listen(); err != nil {
 		log.Error("ingest listen failed", "error", err)

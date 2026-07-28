@@ -166,8 +166,10 @@ occurrence counts, first/last seen, and **Open / Resolved / Ignored** tabs:
 - **Resolve** an exception when you've fixed it: if it ever happens again it automatically
   reopens. **Ignore** silences a group permanently (new occurrences are still stored, the
   group just stays out of the open tab).
-- Charts also plot **P95/P99** duration lines (dashed) next to the average, so latency
-  tails are visible at a glance.
+- Charts also plot **P95/P99** duration lines (dashed) next to the average when they
+  can be calculated exactly. Wider rollup buckets keep the exact weighted average but
+  omit percentiles rather than presenting a mathematically invalid average of hourly
+  percentiles.
 - SQL queries, PHP stack-trace snippets, and JSON payloads are **syntax highlighted**
   with a built-in highlighter (no external assets, works offline).
 
@@ -256,9 +258,9 @@ it to your app servers only (private network / firewall), not the public interne
 `503` otherwise — the container `HEALTHCHECK` uses it, so a Daywatch that is listening but
 cannot reach its database is reported unhealthy instead of quietly serving errors.
 
-Daywatch acknowledges a frame before storing its records, matching the official agent, so
-on `SIGTERM` it stops accepting connections and **drains in-flight batches** before
-exiting rather than dropping records the app was told had landed. Give it room to finish:
+Daywatch acknowledges a valid data frame only after storing its records. On `SIGTERM` it
+stops accepting connections and **drains in-flight batches** before exiting, then sends
+their acknowledgments. Give it room to finish:
 the compose file sets `stop_grace_period: 40s`, and any other supervisor (systemd's
 `TimeoutStopSec`, Kubernetes' `terminationGracePeriodSeconds`) should allow the same.
 

@@ -6,7 +6,7 @@
 {{with .G.Message}}<p class="exc-message">{{.}}</p>{{end}}
 
 <div class="exc-toolbar">
-  <form method="post" action="/exceptions/{{.G.Group}}/status">
+  <form method="post" action="/exceptions/{{.G.Group}}/status?range={{.Base.Range}}{{.Base.ScopeQS}}">
     <input type="hidden" name="back" value="/exceptions/{{.G.Group}}?range={{.Base.Range}}{{.Base.ScopeQS}}">
     {{if ne .G.Status "resolved"}}<button class="btn" name="action" value="resolve">{{icon "check"}} Resolve</button>{{end}}
     {{if ne .G.Status "ignored"}}<button class="btn" name="action" value="ignore">{{icon "x"}} Ignore</button>{{end}}

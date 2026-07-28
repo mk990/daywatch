@@ -61,7 +61,7 @@
       <td title="{{timefmt .FirstSeen}}">{{ago .FirstSeen}}</td>
       <td title="{{timefmt .LastSeen}}">{{ago .LastSeen}}</td>
       <td class="row-actions">
-        <form method="post" action="/exceptions/{{.Group}}/status">
+        <form method="post" action="/exceptions/{{.Group}}/status?range={{$d.Base.Range}}{{$d.Base.ScopeQS}}">
           <input type="hidden" name="back" value="/exceptions?{{$d.Base.QueryString}}">
           {{if eq .Status "open"}}
           <button class="btn-sm" name="action" value="resolve" title="Mark resolved">{{icon "check"}}</button>

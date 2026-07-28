@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -12,9 +13,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mk990/daywatch/internal/store"
+	"golang.org/x/sync/singleflight"
 )
 
 //go:embed templates/*.html
@@ -62,13 +65,35 @@ type Server struct {
 	auth         AuthConfig
 	loginLimiter *loginLimiter
 	alertTester  AlertTester
+
+	scopeMu      sync.Mutex
+	scopeExpires time.Time
+	cachedApps   []string
+	cachedStages []string
+
+	liveMu    sync.Mutex
+	livePages map[string]cachedPage
+	liveGroup singleflight.Group
 }
 
-// Hub returns the live-update hub; the ingest pipeline calls Notify on it.
-func (s *Server) Hub() *Hub { return s.hub }
+type cachedPage struct {
+	header  http.Header
+	body    []byte
+	status  int
+	expires time.Time
+}
+
+// Notify invalidates cached live fragments before waking SSE clients.
+func (s *Server) Notify() {
+	s.invalidateLivePages()
+	s.hub.Notify()
+}
 
 func New(st *store.Store, log *slog.Logger, auth AuthConfig) (*Server, error) {
-	s := &Server{store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(), auth: auth, loginLimiter: newLoginLimiter()}
+	s := &Server{
+		store: st, log: log, bySlug: map[string]*Section{}, hub: NewHub(),
+		auth: auth, loginLimiter: newLoginLimiter(), livePages: map[string]cachedPage{},
+	}
 	s.sections = buildSections()
 	for i := range s.sections {
 		s.bySlug[s.sections[i].Slug] = &s.sections[i]
@@ -165,7 +190,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /alerts/{id}/test", s.handleAlertTest)
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
-	return s.requireAuth(mux)
+	return s.requireAuth(s.cacheLivePages(mux))
 }
 
 // appLink is one entry in a topbar switcher (apps or stages).
@@ -209,12 +234,9 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 		rng, since, label = "24h", time.Now().Add(-24*time.Hour), "last 24 hours"
 	}
 
-	// Registered apps come from the database so panel-created apps show
-	// up immediately; the app filter only accepts registered names.
-	apps, err := s.store.AppNames(r.Context())
-	if err != nil {
-		s.log.Error("listing apps failed", "error", err)
-	}
+	// App/stage metadata changes far less often than live records. Cache it
+	// briefly so every live fragment does not repeat two metadata queries.
+	apps, stages := s.scopes(r.Context())
 	app := ""
 	if want := q.Get("app"); want != "" && slices.Contains(apps, want) {
 		app = want
@@ -222,10 +244,6 @@ func (s *Server) base(r *http.Request, active string) (baseData, time.Time) {
 
 	// Stages are whatever the packages have reported (production, staging,
 	// …); the filter only accepts seen values so links stay canonical.
-	stages, err := s.store.StageNames(r.Context())
-	if err != nil {
-		s.log.Error("listing stages failed", "error", err)
-	}
 	stage := ""
 	if want := q.Get("stage"); want != "" && slices.Contains(stages, want) {
 		stage = want
@@ -288,11 +306,144 @@ func scopeSwitch(r *http.Request, param, allLabel string, names []string, curren
 	return links
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
-		s.log.Error("template render failed", "template", name, "error", err)
+func (s *Server) scopes(ctx context.Context) ([]string, []string) {
+	now := time.Now()
+	s.scopeMu.Lock()
+	if now.Before(s.scopeExpires) {
+		apps, stages := slices.Clone(s.cachedApps), slices.Clone(s.cachedStages)
+		s.scopeMu.Unlock()
+		return apps, stages
 	}
+	oldApps, oldStages := slices.Clone(s.cachedApps), slices.Clone(s.cachedStages)
+	s.scopeMu.Unlock()
+
+	apps, err := s.store.AppNames(ctx)
+	if err != nil {
+		s.log.Error("listing apps failed", "error", err)
+		apps = oldApps
+	}
+	stages, err := s.store.StageNames(ctx)
+	if err != nil {
+		s.log.Error("listing stages failed", "error", err)
+		stages = oldStages
+	}
+
+	s.scopeMu.Lock()
+	s.cachedApps, s.cachedStages = slices.Clone(apps), slices.Clone(stages)
+	s.scopeExpires = now.Add(10 * time.Second)
+	s.scopeMu.Unlock()
+	return apps, stages
+}
+
+func (s *Server) invalidateScopeCache() {
+	s.scopeMu.Lock()
+	s.scopeExpires = time.Time{}
+	s.scopeMu.Unlock()
+}
+
+func (s *Server) invalidateLivePages() {
+	s.liveMu.Lock()
+	clear(s.livePages)
+	s.liveMu.Unlock()
+}
+
+type captureWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func newCaptureWriter() *captureWriter { return &captureWriter{header: http.Header{}} }
+func (w *captureWriter) Header() http.Header {
+	return w.header
+}
+func (w *captureWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+func (w *captureWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(p)
+}
+
+// cacheLivePages coalesces simultaneous live refreshes of the same URL and
+// shares the resulting main-content fragment for a few seconds. Normal page
+// loads are never cached.
+func (s *Server) cacheLivePages(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("X-Live-Reload") == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		key := r.URL.RequestURI()
+		result, _, _ := s.liveGroup.Do(key, func() (any, error) {
+			now := time.Now()
+			s.liveMu.Lock()
+			page, ok := s.livePages[key]
+			if !ok || !now.Before(page.expires) {
+				delete(s.livePages, key)
+				for cachedKey, cached := range s.livePages {
+					if !now.Before(cached.expires) {
+						delete(s.livePages, cachedKey)
+					}
+				}
+			}
+			s.liveMu.Unlock()
+			if ok && now.Before(page.expires) {
+				return page, nil
+			}
+
+			cw := newCaptureWriter()
+			next.ServeHTTP(cw, r)
+			page = cachedPage{
+				header: cw.header.Clone(), body: bytes.Clone(cw.body.Bytes()),
+				status: cw.status, expires: now.Add(5 * time.Second),
+			}
+			if page.status == http.StatusOK {
+				s.liveMu.Lock()
+				if len(s.livePages) >= 256 {
+					clear(s.livePages)
+				}
+				s.livePages[key] = page
+				s.liveMu.Unlock()
+			}
+			return page, nil
+		})
+		page := result.(cachedPage)
+		for k, values := range page.header {
+			for _, value := range values {
+				w.Header().Add(k, value)
+			}
+		}
+		w.WriteHeader(page.status)
+		w.Write(page.body)
+	})
+}
+
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var out bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&out, name, data); err != nil {
+		s.log.Error("template render failed", "template", name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	body := out.Bytes()
+	if r.Header.Get("X-Live-Reload") != "" {
+		const open = `<main class="content">`
+		if start := bytes.Index(body, []byte(open)); start >= 0 {
+			start += len(open)
+			if end := bytes.LastIndex(body, []byte("</main>")); end >= start {
+				body = body[start:end]
+				w.Header().Set("X-Daywatch-Fragment", "main")
+			}
+		}
+	}
+	w.Write(body)
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +490,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		total += c.Count
 	}
 
-	s.render(w, "dashboard.html", map[string]any{
+	s.render(w, r, "dashboard.html", map[string]any{
 		"Base":        base,
 		"Counts":      countMap,
 		"Total":       total,
@@ -427,7 +578,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	s.withUserNames(ctx, records)
+	s.withUserNames(ctx, base.App, base.Stage, records)
 	count, err := s.store.Count(ctx, filter)
 	if err != nil {
 		httpError(w, s.log, err)
@@ -474,7 +625,7 @@ func (s *Server) handleSection(w http.ResponseWriter, r *http.Request) {
 	clearQS.Del("to")
 	clearQS.Del("sort")
 
-	s.render(w, "section.html", map[string]any{
+	s.render(w, r, "section.html", map[string]any{
 		"Base":       base,
 		"Section":    sec,
 		"Records":    records,
@@ -516,9 +667,9 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	one := []store.Record{*rec}
-	s.withUserNames(r.Context(), one)
 	base, _ := s.base(r, "")
-	s.render(w, "record.html", map[string]any{"Base": base, "Record": one[0], "User": userCell(one[0])})
+	s.withUserNames(r.Context(), base.App, base.Stage, one)
+	s.render(w, r, "record.html", map[string]any{"Base": base, "Record": one[0], "User": userCell(one[0])})
 }
 
 // wfRow is one row of the trace waterfall: a record positioned on the
@@ -697,7 +848,7 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base, _ := s.base(r, "")
-	s.render(w, "trace.html", map[string]any{
+	s.render(w, r, "trace.html", map[string]any{
 		"Base":    base,
 		"Trace":   trace,
 		"Records": records,

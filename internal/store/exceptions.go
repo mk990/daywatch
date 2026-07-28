@@ -6,16 +6,36 @@ import (
 	"time"
 )
 
-// Exception triage state lives in its own table keyed by group hash.
+// Exception triage state lives in its own table keyed by the active
+// app/stage scope plus group hash. The empty app or stage represents the
+// corresponding "all" scope in the panel.
 // A group with no row is "open"; resolving or ignoring inserts a row.
 // New occurrences of a resolved group delete the row (auto-reopen),
 // while ignored groups stay ignored.
 const exceptionSchema = `
 CREATE TABLE IF NOT EXISTS exception_status (
-    group_hash TEXT PRIMARY KEY,
+    app        TEXT        NOT NULL DEFAULT '',
+    stage      TEXT        NOT NULL DEFAULT '',
+    group_hash TEXT        NOT NULL,
     status     TEXT        NOT NULL CHECK (status IN ('resolved','ignored')),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (app, stage, group_hash)
 );
+ALTER TABLE exception_status ADD COLUMN IF NOT EXISTS app TEXT NOT NULL DEFAULT '';
+ALTER TABLE exception_status ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT '';
+DO $$
+DECLARE pk_name TEXT;
+BEGIN
+    SELECT c.conname INTO pk_name
+    FROM pg_constraint c
+    WHERE c.conrelid = 'exception_status'::regclass AND c.contype = 'p'
+      AND pg_get_constraintdef(c.oid) <> 'PRIMARY KEY (app, stage, group_hash)';
+    IF pk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE exception_status DROP CONSTRAINT %I', pk_name);
+        ALTER TABLE exception_status
+            ADD CONSTRAINT exception_status_pkey PRIMARY KEY (app, stage, group_hash);
+    END IF;
+END $$;
 `
 
 func (s *Store) migrateExceptions(ctx context.Context) error {
@@ -74,7 +94,8 @@ func (s *Store) ExceptionGroups(ctx context.Context, app, stage string, since, u
 			GROUP BY group_hash
 		) g
 		JOIN records r ON r.id = g.last_id
-		LEFT JOIN exception_status es ON es.group_hash = g.group_hash
+			LEFT JOIN exception_status es
+			  ON es.group_hash = g.group_hash AND es.app = $2 AND es.stage = $3
 		CROSS JOIN LATERAL (
 			SELECT min(ts) AS first_seen FROM records
 			WHERE type = 'exception' AND group_hash = g.group_hash
@@ -128,7 +149,8 @@ func (s *Store) ExceptionStatusCounts(ctx context.Context, app, stage string, si
 			WHERE type = 'exception' AND group_hash <> '' AND ts >= $1 AND ts < %s
 			  AND ($2 = '' OR app = $2) AND ($3 = '' OR stage = $3)
 		) g
-		LEFT JOIN exception_status es ON es.group_hash = g.group_hash
+		LEFT JOIN exception_status es
+		  ON es.group_hash = g.group_hash AND es.app = $2 AND es.stage = $3
 		GROUP BY 1`, end)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -169,7 +191,8 @@ func (s *Store) GetExceptionGroup(ctx context.Context, app, stage, group string)
 			GROUP BY group_hash
 		) g
 		JOIN records r ON r.id = g.last_id
-		LEFT JOIN exception_status es ON es.group_hash = g.group_hash`, group, app, stage)
+			LEFT JOIN exception_status es
+			  ON es.group_hash = g.group_hash AND es.app = $2 AND es.stage = $3`, group, app, stage)
 	var g ExceptionGroup
 	if err := row.Scan(&g.Group, &g.Class, &g.Message, &g.File, &g.Line,
 		&g.Count, &g.Unhandled, &g.FirstSeen, &g.LastSeen, &g.Status, &g.StatusAt, &g.LastID); err != nil {
@@ -179,15 +202,19 @@ func (s *Store) GetExceptionGroup(ctx context.Context, app, stage, group string)
 }
 
 // SetExceptionStatus updates a group's triage state. "open" clears the row.
-func (s *Store) SetExceptionStatus(ctx context.Context, group, status string) error {
+func (s *Store) SetExceptionStatus(ctx context.Context, app, stage, group, status string) error {
 	switch status {
 	case "open":
-		_, err := s.pool.Exec(ctx, `DELETE FROM exception_status WHERE group_hash = $1`, group)
+		_, err := s.pool.Exec(ctx,
+			`DELETE FROM exception_status WHERE app = $1 AND stage = $2 AND group_hash = $3`,
+			app, stage, group)
 		return err
 	case "resolved", "ignored":
 		_, err := s.pool.Exec(ctx, `
-			INSERT INTO exception_status (group_hash, status, updated_at) VALUES ($1, $2, now())
-			ON CONFLICT (group_hash) DO UPDATE SET status = $2, updated_at = now()`, group, status)
+			INSERT INTO exception_status (app, stage, group_hash, status, updated_at)
+			VALUES ($1, $2, $3, $4, now())
+			ON CONFLICT (app, stage, group_hash)
+			DO UPDATE SET status = $4, updated_at = now()`, app, stage, group, status)
 		return err
 	default:
 		return fmt.Errorf("invalid exception status %q", status)
@@ -196,11 +223,17 @@ func (s *Store) SetExceptionStatus(ctx context.Context, group, status string) er
 
 // reopenResolved clears "resolved" for groups that just recurred, so they
 // show up as open again. Ignored groups are left alone.
-func (s *Store) reopenResolved(ctx context.Context, groups []string) error {
+func (s *Store) reopenResolved(ctx context.Context, app string, groups, stages []string) error {
 	if len(groups) == 0 {
 		return nil
 	}
-	_, err := s.pool.Exec(ctx,
-		`DELETE FROM exception_status WHERE status = 'resolved' AND group_hash = ANY($1)`, groups)
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM exception_status es
+		USING unnest($1::text[], $2::text[]) AS incoming(group_hash, stage)
+		WHERE es.status = 'resolved'
+		  AND es.group_hash = incoming.group_hash
+		  AND (es.app = '' OR es.app = $3)
+		  AND (es.stage = '' OR es.stage = incoming.stage)`,
+		groups, stages, app)
 	return err
 }

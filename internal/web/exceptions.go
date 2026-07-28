@@ -127,7 +127,7 @@ func (s *Server) handleExceptions(w http.ResponseWriter, r *http.Request) {
 	clearQS.Del("from")
 	clearQS.Del("to")
 
-	s.render(w, "exceptions.html", map[string]any{
+	s.render(w, r, "exceptions.html", map[string]any{
 		"Base":      base,
 		"Groups":    groups,
 		"Tab":       tab,
@@ -189,7 +189,7 @@ func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "exception.html", map[string]any{
+	s.render(w, r, "exception.html", map[string]any{
 		"Base":        base,
 		"G":           g,
 		"Record":      rec,
@@ -202,6 +202,7 @@ func (s *Server) handleExceptionDetail(w http.ResponseWriter, r *http.Request) {
 // handleExceptionStatus applies a triage action (resolve/ignore/reopen).
 func (s *Server) handleExceptionStatus(w http.ResponseWriter, r *http.Request) {
 	group := r.PathValue("group")
+	base, _ := s.base(r, "exceptions")
 	status := map[string]string{
 		"resolve": "resolved",
 		"ignore":  "ignored",
@@ -211,14 +212,14 @@ func (s *Server) handleExceptionStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid action", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.SetExceptionStatus(r.Context(), group, status); err != nil {
+	if err := s.store.SetExceptionStatus(r.Context(), base.App, base.Stage, group, status); err != nil {
 		httpError(w, s.log, err)
 		return
 	}
-	s.hub.Notify()
+	s.Notify()
 	back := r.FormValue("back")
-	if back == "" || !strings.HasPrefix(back, "/") {
-		back = "/exceptions/" + group
+	if back == "" || !strings.HasPrefix(back, "/") || strings.HasPrefix(back, "//") {
+		back = "/exceptions/" + group + "?range=" + base.Range + string(base.ScopeQS)
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }

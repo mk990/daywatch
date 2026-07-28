@@ -166,19 +166,27 @@ type TypeCount struct {
 }
 
 func (s *Store) CountsByType(ctx context.Context, app, stage string, since time.Time) ([]TypeCount, error) {
-	// Full hours are summed from the hourly rollups (tiny table); only the
-	// current partial hour is counted live from raw records. This keeps the
-	// dashboard O(rollup rows) instead of scanning every record since `since`.
-	args := []any{since.Truncate(time.Hour)}
+	// Full hours are summed from the hourly rollups (tiny table). Raw records
+	// supply both boundary fragments: from the exact requested start to the
+	// first full hour, and the current partial hour. This avoids silently
+	// including up to 59 minutes before `since`.
+	args := []any{since}
 	appCond := optEq(&args, "app", app)
 	stageCond := optEq(&args, "stage", stage)
 	q := fmt.Sprintf(`
+		WITH bounds AS (
+			SELECT CASE
+			         WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN $1::timestamptz
+			         ELSE date_trunc('hour', $1::timestamptz) + interval '1 hour'
+			       END AS full_start,
+			       date_trunc('hour', now()) AS current_start
+		)
 		SELECT type, sum(cnt) FROM (
-			SELECT type, cnt FROM rollups_hourly
-			WHERE bucket >= $1 AND bucket < date_trunc('hour', now())%[1]s%[2]s
+			SELECT type, cnt FROM rollups_hourly, bounds
+			WHERE bucket >= full_start AND bucket < current_start%[1]s%[2]s
 			UNION ALL
-			SELECT type, 1 FROM records
-			WHERE ts >= greatest($1, date_trunc('hour', now()))%[1]s%[2]s
+			SELECT type, 1 FROM records, bounds
+			WHERE ts >= $1 AND (ts < full_start OR ts >= current_start)%[1]s%[2]s
 		) t GROUP BY type ORDER BY sum(cnt) DESC`, appCond, stageCond)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -208,7 +216,23 @@ type RouteStat struct {
 	LastSeen time.Time
 }
 
+// groupLabelSQL extracts the stable display label stored in hourly group
+// rollups. It mirrors the per-section label expressions used by the panel.
+const groupLabelSQL = `CASE type
+	WHEN 'request' THEN concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))
+	WHEN 'query' THEN data->>'sql'
+	WHEN 'exception' THEN concat(data->>'class', ': ', data->>'message')
+	WHEN 'outgoing-request' THEN concat(data->>'method', ' ', data->>'host')
+	WHEN 'cache-event' THEN data->>'key'
+	WHEN 'mail' THEN data->>'class'
+	WHEN 'notification' THEN data->>'class'
+	ELSE data->>'name'
+END`
+
 func (s *Store) RequestStats(ctx context.Context, app, stage string, since time.Time, limit int) ([]RouteStat, error) {
+	if time.Since(since) > 2*time.Hour {
+		return s.requestStatsFromRollups(ctx, app, stage, since, limit)
+	}
 	args := []any{since, limit}
 	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
@@ -240,6 +264,53 @@ func (s *Store) RequestStats(ctx context.Context, app, stage string, since time.
 	return out, rows.Err()
 }
 
+func (s *Store) requestStatsFromRollups(ctx context.Context, app, stage string, since time.Time, limit int) ([]RouteStat, error) {
+	args := []any{since, limit}
+	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		WITH bounds AS (
+			SELECT CASE
+			         WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN $1::timestamptz
+			         ELSE date_trunc('hour', $1::timestamptz) + interval '1 hour'
+			       END AS full_start,
+			       date_trunc('hour', now()) AS current_start
+		), src AS (
+			SELECT group_hash, label, cnt, total_duration, max_duration,
+			       errors, last_seen
+			FROM group_rollups_hourly, bounds
+			WHERE type = 'request' AND bucket >= full_start AND bucket < current_start%s
+			UNION ALL
+			SELECT group_hash,
+			       max(concat(data->>'method', ' ', coalesce(nullif(data->>'route_path',''), data->>'url'))),
+			       count(*), coalesce(sum(duration), 0), max(duration),
+			       count(*) FILTER (WHERE status >= '500' AND status < '600' AND length(status) = 3),
+			       max(ts)
+			FROM records, bounds
+			WHERE type = 'request' AND ts >= $1
+			  AND (ts < full_start OR ts >= current_start)%s
+			GROUP BY group_hash
+		)
+		SELECT group_hash, max(label), sum(cnt),
+		       coalesce(sum(total_duration)::float8 / nullif(sum(cnt), 0), 0),
+		       0::float8, max(max_duration), sum(errors), max(last_seen)
+		FROM src GROUP BY group_hash
+		ORDER BY sum(cnt) DESC LIMIT $2`, scope, scope), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RouteStat
+	for rows.Next() {
+		var rs RouteStat
+		if err := rows.Scan(&rs.Group, &rs.Label, &rs.Count, &rs.AvgMs, &rs.P95Ms,
+			&rs.MaxMs, &rs.Errors, &rs.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, rs)
+	}
+	return out, rows.Err()
+}
+
 // GroupStat is a generic per-group aggregate used for queries, exceptions, etc.
 type GroupStat struct {
 	Group    string
@@ -254,23 +325,41 @@ type GroupStat struct {
 // "count" (most frequent), "avg" or "max" (slowest), "total" (most time overall).
 func (s *Store) GroupStats(ctx context.Context, app, stage, typ, labelExpr, orderBy string, since time.Time, limit int) ([]GroupStat, error) {
 	orderExpr := map[string]string{
-		"count": "count(*)",
-		"avg":   "avg(duration)",
-		"max":   "max(duration)",
-		"total": "sum(duration)",
+		"count": "sum(cnt)",
+		"avg":   "sum(total_duration)::float8 / nullif(sum(cnt), 0)",
+		"max":   "max(max_duration)",
+		"total": "sum(total_duration)",
 	}[orderBy]
 	if orderExpr == "" {
-		orderExpr = "count(*)"
+		orderExpr = "sum(cnt)"
 	}
 	args := []any{typ, since, limit}
 	scope := optEq(&args, "app", app) + optEq(&args, "stage", stage)
 	q := fmt.Sprintf(`
-		SELECT group_hash, max(%s) AS label, count(*), avg(duration)::float8, max(duration), max(ts)
-		FROM records
-		WHERE type = $1 AND ts >= $2 AND group_hash <> ''%s
-		GROUP BY group_hash
+		WITH bounds AS (
+			SELECT CASE
+			         WHEN $2::timestamptz = date_trunc('hour', $2::timestamptz) THEN $2::timestamptz
+			         ELSE date_trunc('hour', $2::timestamptz) + interval '1 hour'
+			       END AS full_start,
+			       date_trunc('hour', now()) AS current_start
+		), src AS (
+			SELECT group_hash, label, cnt, total_duration, max_duration, last_seen
+			FROM group_rollups_hourly, bounds
+			WHERE type = $1 AND bucket >= full_start AND bucket < current_start%s
+			UNION ALL
+			SELECT group_hash, max(%s), count(*), coalesce(sum(duration), 0),
+			       max(duration), max(ts)
+			FROM records, bounds
+			WHERE type = $1 AND ts >= $2 AND group_hash <> ''
+			  AND (ts < full_start OR ts >= current_start)%s
+			GROUP BY group_hash
+		)
+		SELECT group_hash, max(label), sum(cnt),
+		       coalesce(sum(total_duration)::float8 / nullif(sum(cnt), 0), 0),
+		       max(max_duration), max(last_seen)
+		FROM src GROUP BY group_hash
 		ORDER BY %s DESC
-		LIMIT $3`, labelExpr, scope, orderExpr)
+		LIMIT $3`, scope, labelExpr, scope, orderExpr)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

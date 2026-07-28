@@ -11,10 +11,10 @@
     {{range .Users}}
     <tr>
       <td>
-        <a href="/user/{{.UserID}}?range={{$.Base.Range}}{{$.Base.ScopeQS}}">
+        <a href="/user/{{.UserID}}?range={{$.Base.Range}}&app={{.App}}{{if $.Base.Stage}}&stage={{$.Base.Stage}}{{end}}">
           <strong>{{if .Name}}{{.Name}}{{else}}#{{.UserID}}{{end}}</strong>
         </a>
-        <span class="hint">{{with .Username}}{{.}} · {{end}}id {{.UserID}}</span>
+        <span class="hint">{{with .Username}}{{.}} · {{end}}id {{.UserID}}{{if not $.Base.App}} · {{.App}}{{end}}</span>
       </td>
       <td>{{.Requests}}</td>
       <td>{{if .Errors}}<span class="badge err">{{.Errors}}</span>{{else}}0{{end}}</td>

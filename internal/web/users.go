@@ -16,7 +16,36 @@ import (
 // withUserNames fills Record.UserName for every record carrying a user id,
 // in one lookup, so lists can show "Name #42" instead of a bare number.
 // A failure only costs the names, so it logs and leaves them blank.
-func (s *Server) withUserNames(ctx context.Context, records []store.Record) {
+func (s *Server) withUserNames(ctx context.Context, app, stage string, records []store.Record) {
+	if app == "" {
+		byApp := map[string][]int{}
+		for i := range records {
+			if records[i].UserID != "" {
+				byApp[records[i].App] = append(byApp[records[i].App], i)
+			}
+		}
+		for recordApp, indexes := range byApp {
+			seen := map[string]bool{}
+			var ids []string
+			for _, i := range indexes {
+				id := records[i].UserID
+				if !seen[id] {
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
+			names, err := s.store.UserNames(ctx, recordApp, stage, ids)
+			if err != nil {
+				s.log.Warn("resolving user names failed", "app", recordApp, "error", err)
+				continue
+			}
+			for _, i := range indexes {
+				records[i].UserName = names[records[i].UserID]
+			}
+		}
+		return
+	}
+
 	seen := map[string]bool{}
 	var ids []string
 	for _, r := range records {
@@ -28,7 +57,7 @@ func (s *Server) withUserNames(ctx context.Context, records []store.Record) {
 	if len(ids) == 0 {
 		return
 	}
-	names, err := s.store.UserNames(ctx, ids)
+	names, err := s.store.UserNames(ctx, app, stage, ids)
 	if err != nil {
 		s.log.Warn("resolving user names failed", "error", err)
 		return
@@ -47,12 +76,24 @@ func userCell(r store.Record) template.HTML {
 		return ""
 	}
 	id := template.HTMLEscapeString(r.UserID)
+	href := "/user/" + url.PathEscape(r.UserID)
+	q := url.Values{}
+	if r.App != "" {
+		q.Set("app", r.App)
+	}
+	if r.Stage != "" {
+		q.Set("stage", r.Stage)
+	}
+	if enc := q.Encode(); enc != "" {
+		href += "?" + enc
+	}
+	href = template.HTMLEscapeString(href)
 	if r.UserName == "" {
-		return template.HTML(`<a class="user-ref" href="/user/` + id + `"><span class="user-id">#` + id + `</span></a>`)
+		return template.HTML(`<a class="user-ref" href="` + href + `"><span class="user-id">#` + id + `</span></a>`)
 	}
 	return template.HTML(fmt.Sprintf(
-		`<a class="user-ref" href="/user/%s"><span class="user-name">%s</span><span class="user-id">#%s</span></a>`,
-		id, template.HTMLEscapeString(trunc(r.UserName, 28)), id))
+		`<a class="user-ref" href="%s"><span class="user-name">%s</span><span class="user-id">#%s</span></a>`,
+		href, template.HTMLEscapeString(trunc(r.UserName, 28)), id))
 }
 
 // handleUsers lists the most active users in the selected window.
@@ -63,7 +104,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	s.render(w, "users.html", map[string]any{
+	s.render(w, r, "users.html", map[string]any{
 		"Base":  base,
 		"Users": users,
 	})
@@ -170,7 +211,7 @@ func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	s.render(w, "user.html", map[string]any{
+	s.render(w, r, "user.html", map[string]any{
 		"Base":  base,
 		"U":     stat,
 		"Rows":  rows,

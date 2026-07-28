@@ -19,7 +19,7 @@ func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 		httpError(w, s.log, err)
 		return
 	}
-	s.render(w, "apps.html", map[string]any{
+	s.render(w, r, "apps.html", map[string]any{
 		"Base":    base,
 		"Apps":    apps,
 		"Error":   r.URL.Query().Get("error"),
@@ -51,7 +51,8 @@ func (s *Server) handleAppCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("app created", "app", name)
-	s.hub.Notify()
+	s.invalidateScopeCache()
+	s.Notify()
 	http.Redirect(w, r, "/apps?created="+url.QueryEscape(name), http.StatusSeeOther)
 }
 
@@ -100,6 +101,7 @@ func (s *Server) handleAppDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("app deleted", "app", app.Name)
-	s.hub.Notify()
+	s.invalidateScopeCache()
+	s.Notify()
 	http.Redirect(w, r, "/apps", http.StatusSeeOther)
 }

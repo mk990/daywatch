@@ -27,6 +27,22 @@ CREATE TABLE IF NOT EXISTS rollups_hourly (
     p99            BIGINT      NOT NULL DEFAULT 0,
     PRIMARY KEY (bucket, app, type, stage)
 );
+CREATE TABLE IF NOT EXISTS group_rollups_hourly (
+    bucket         TIMESTAMPTZ NOT NULL,
+    app            TEXT        NOT NULL DEFAULT '',
+    type           TEXT        NOT NULL,
+    stage          TEXT        NOT NULL DEFAULT '',
+    group_hash     TEXT        NOT NULL,
+    label          TEXT        NOT NULL DEFAULT '',
+    cnt            BIGINT      NOT NULL DEFAULT 0,
+    total_duration BIGINT      NOT NULL DEFAULT 0,
+    max_duration   BIGINT      NOT NULL DEFAULT 0,
+    errors         BIGINT      NOT NULL DEFAULT 0,
+    last_seen      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (bucket, app, type, stage, group_hash)
+);
+CREATE INDEX IF NOT EXISTS group_rollups_type_bucket_idx
+    ON group_rollups_hourly (type, bucket);
 `
 
 func (s *Store) migrateRollups(ctx context.Context) error {
@@ -83,23 +99,50 @@ func (s *Store) UpdateRollups(ctx context.Context, since time.Time) error {
 			total_duration = EXCLUDED.total_duration,
 			p95 = EXCLUDED.p95, p99 = EXCLUDED.p99`, statusClassSQL)
 	_, err := s.pool.Exec(ctx, q, since)
+	if err != nil {
+		return err
+	}
+	groupQ := fmt.Sprintf(`
+		INSERT INTO group_rollups_hourly
+			(bucket, app, type, stage, group_hash, label, cnt, total_duration,
+			 max_duration, errors, last_seen)
+		SELECT date_trunc('hour', ts), app, type, stage, group_hash,
+		       max(%[1]s), count(*), coalesce(sum(duration), 0), max(duration),
+		       count(*) FILTER (WHERE %[2]s = 'err'), max(ts)
+		FROM records
+		WHERE ts >= date_trunc('hour', $1::timestamptz) AND group_hash <> ''
+		GROUP BY 1, 2, 3, 4, 5
+		ON CONFLICT (bucket, app, type, stage, group_hash) DO UPDATE SET
+			label = EXCLUDED.label, cnt = EXCLUDED.cnt,
+			total_duration = EXCLUDED.total_duration,
+			max_duration = EXCLUDED.max_duration, errors = EXCLUDED.errors,
+			last_seen = EXCLUDED.last_seen`, groupLabelSQL, statusClassSQL)
+	_, err = s.pool.Exec(ctx, groupQ, since)
 	return err
 }
 
 // PruneRollups deletes rollups older than the retention window.
 func (s *Store) PruneRollups(ctx context.Context, olderThan time.Duration) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM rollups_hourly WHERE bucket < now() - $1::interval`,
-		fmt.Sprintf("%d seconds", int64(olderThan.Seconds())))
+	interval := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
+	tag, err := s.pool.Exec(ctx, `DELETE FROM rollups_hourly WHERE bucket < now() - $1::interval`, interval)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	groupTag, err := s.pool.Exec(ctx,
+		`DELETE FROM group_rollups_hourly WHERE bucket < now() - $1::interval`, interval)
+	if err != nil {
+		return tag.RowsAffected(), err
+	}
+	return tag.RowsAffected() + groupTag.RowsAffected(), nil
 }
 
 // timelineFromRollups serves TimelineByClass for hour-or-larger buckets:
-// full hours come from rollups (weighted-average percentiles), the current
-// partial hour is aggregated live from records so charts stay fresh.
+// full hours come from rollups and the current partial hour is aggregated
+// live from records so charts stay fresh. Hourly percentile values cannot be
+// merged into an exact percentile for a wider bucket (or across app/stage
+// rows), so those lines are only returned for one-hour, fully scoped series.
 func (s *Store) timelineFromRollups(ctx context.Context, app, stage, typ string, origin, end time.Time, bucketMinutes int) ([]ClassBucket, error) {
+	exactPercentiles := bucketMinutes == 60 && app != "" && stage != "" && typ != ""
 	q := fmt.Sprintf(`
 		WITH agg AS (
 			SELECT date_bin($3::interval, bucket, $2) AS b,
@@ -141,6 +184,9 @@ func (s *Store) timelineFromRollups(ctx context.Context, app, stage, typ string,
 		if err := rows.Scan(&cb.Bucket, &cb.OK, &cb.Warn, &cb.Err, &cb.Other,
 			&cb.AvgMs, &cb.P95, &cb.P99); err != nil {
 			return nil, err
+		}
+		if !exactPercentiles {
+			cb.P95, cb.P99 = 0, 0
 		}
 		byBucket[cb.Bucket.Unix()] = cb
 	}

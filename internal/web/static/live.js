@@ -41,12 +41,17 @@
       if (res.status === 401) { window.location.href = '/login'; return; }
       if (!res.ok) return;
       const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const fresh = doc.querySelector('main.content');
       const current = document.querySelector('main.content');
-      if (!fresh || !current) return;
+      if (!current) return;
       const scrollY = window.scrollY;
-      current.replaceChildren(...fresh.childNodes);
+      if (res.headers.get('X-Daywatch-Fragment') === 'main') {
+        current.innerHTML = html;
+      } else {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const fresh = doc.querySelector('main.content');
+        if (!fresh) return;
+        current.replaceChildren(...fresh.childNodes);
+      }
       window.scrollTo(0, scrollY);
       paint(); // the swapped topbar contains a new pill
       initCharts(current);
@@ -62,7 +67,7 @@
 
   function schedule() {
     if (timer) return;
-    timer = setTimeout(() => { timer = null; refresh(); }, 800);
+    timer = setTimeout(() => { timer = null; refresh(); }, 5000);
   }
 
   function wirePill() {
@@ -77,6 +82,29 @@
     });
   }
 
+  function wireMobileNav() {
+    const app = document.querySelector('.app');
+    const button = document.getElementById('mobile-menu');
+    const shade = document.getElementById('nav-shade');
+    if (!app || !button || button.dataset.wired) return;
+    button.dataset.wired = '1';
+    const close = () => {
+      app.classList.remove('nav-open');
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('aria-label', 'Open navigation');
+    };
+    button.addEventListener('click', () => {
+      const open = app.classList.toggle('nav-open');
+      button.setAttribute('aria-expanded', String(open));
+      button.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    });
+    if (shade) shade.addEventListener('click', close);
+    app.querySelectorAll('.sidebar a').forEach((link) => link.addEventListener('click', close));
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+  }
+
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && dirty) schedule();
   });
@@ -84,6 +112,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     paint();
     wirePill();
+    wireMobileNav();
     const es = new EventSource('/events');
     es.addEventListener('update', schedule);
   });

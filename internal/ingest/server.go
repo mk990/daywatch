@@ -34,7 +34,7 @@ type AppResolver interface {
 //
 // where length = len("v1") + 1 + len(tokenHash) + 1 + len(payload).
 // The payload is either the literal "PING" or a JSON array of records.
-// Every complete frame is acknowledged with "2:OK" and the connection closed.
+// Valid data frames are acknowledged with "2:OK" after they have been stored.
 type Server struct {
 	addr        string
 	resolver    AppResolver
@@ -42,9 +42,8 @@ type Server struct {
 	sink        Sink
 	log         *slog.Logger
 	ln          net.Listener
-	// inFlight tracks connection handlers so shutdown can drain them: a
-	// frame is acknowledged before its records are stored, so exiting while
-	// a handler is mid-insert loses records the sender believes landed.
+	// inFlight tracks connection handlers so shutdown can drain accepted
+	// frames and acknowledge them after their records are stored.
 	wg       sync.WaitGroup
 	inFlight atomic.Int64
 }
@@ -95,9 +94,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
-// drain waits for accepted connections to finish storing their records.
-// Frames are acknowledged before the insert completes, so returning early
-// would drop records the sending app has already been told were delivered.
+// drain waits for accepted connections to finish storing and acknowledging
+// their records.
 func (s *Server) drain() {
 	if n := s.inFlight.Load(); n > 0 {
 		s.log.Info("draining ingest connections", "in_flight", n)
@@ -118,7 +116,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 	defer s.inFlight.Add(-1)
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(s.readTimeout))
+	conn.SetReadDeadline(time.Now().Add(s.readTimeout))
 
 	payload, tokenHash, err := readFrame(conn)
 	if err != nil {
@@ -131,33 +129,32 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	cancelResolve()
 	if err != nil {
 		s.log.Error("app resolution failed", "error", err)
-		conn.Write([]byte(ack))
 		return
 	}
 	if anyApps && !found {
 		s.log.Warn("invalid token hash", "remote", conn.RemoteAddr().String(), "got", tokenHash)
 		// The official agent still ACKs before validating, so we do the same:
 		// the app treats a missing ACK as an agent failure and logs noise.
-		conn.Write([]byte(ack))
+		s.writeACK(conn)
 		return
-	}
-
-	// ACK as soon as the frame is complete, mirroring the official agent.
-	if _, err := conn.Write([]byte(ack)); err != nil {
-		s.log.Warn("ack write failed", "error", err)
 	}
 
 	if bytes.Equal(payload, []byte("PING")) {
 		s.log.Debug("ping received", "remote", conn.RemoteAddr().String())
+		s.writeACK(conn)
 		return
 	}
 
 	var records []json.RawMessage
 	if err := json.Unmarshal(payload, &records); err != nil {
 		s.log.Warn("invalid JSON payload", "error", err, "size", len(payload))
+		// Retrying a syntactically invalid frame cannot make it valid, and the
+		// protocol has no negative acknowledgment.
+		s.writeACK(conn)
 		return
 	}
 	if len(records) == 0 {
+		s.writeACK(conn)
 		return
 	}
 
@@ -168,7 +165,17 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		s.log.Error("insert failed", "error", err, "records", len(records))
 		return
 	}
+	s.writeACK(conn)
 	s.log.Info("ingested", "records", n, "app", app, "remote", conn.RemoteAddr().String())
+}
+
+func (s *Server) writeACK(conn net.Conn) {
+	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		s.log.Warn("ack deadline failed", "error", err)
+	}
+	if _, err := conn.Write([]byte(ack)); err != nil {
+		s.log.Warn("ack write failed", "error", err)
+	}
 }
 
 // readFrame parses one protocol frame from r.

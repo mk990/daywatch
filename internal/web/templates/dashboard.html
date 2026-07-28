@@ -29,7 +29,7 @@
         <td><a href="/section/requests?group={{.Group}}&range={{$.Base.Range}}{{$.Base.ScopeQS}}" class="mono">{{.Label}}</a></td>
         <td>{{.Count}}</td>
         <td>{{ms .AvgMs}}</td>
-        <td>{{ms .P95Ms}}</td>
+        <td>{{if .P95Ms}}{{ms .P95Ms}}{{else}}<span class="hint" title="Omitted for pre-aggregated ranges because hourly percentiles cannot be merged exactly.">—</span>{{end}}</td>
         <td>{{if .Errors}}<span class="badge err">{{.Errors}}</span>{{else}}0{{end}}</td>
       </tr>
       {{end}}

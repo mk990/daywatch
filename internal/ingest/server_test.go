@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -116,6 +117,12 @@ type slowSink struct {
 	rows  int
 }
 
+type failingSink struct{}
+
+func (failingSink) InsertRecords(context.Context, []json.RawMessage, string) (int, error) {
+	return 0, errors.New("database unavailable")
+}
+
 func (s *slowSink) InsertRecords(ctx context.Context, r []json.RawMessage, _ string) (int, error) {
 	select {
 	case <-time.After(s.delay):
@@ -134,8 +141,7 @@ func (s *slowSink) stored() int {
 	return s.rows
 }
 
-// A frame is ACKed before its records are stored, so shutdown must wait for
-// in-flight handlers instead of returning the moment the listener closes.
+// Shutdown must wait for an accepted frame to be stored before it is ACKed.
 func TestServeDrainsInFlightInserts(t *testing.T) {
 	sink := &slowSink{delay: 300 * time.Millisecond}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -156,13 +162,13 @@ func TestServeDrainsInFlightInserts(t *testing.T) {
 	if _, err := conn.Write([]byte(buildFrame("c27c052", `[{"t":"request","duration":1}]`))); err != nil {
 		t.Fatal(err)
 	}
+	// Shut down while the sink is still handling the accepted frame.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := io.ReadFull(conn, make([]byte, 4)); err != nil {
-		t.Fatal("no ack:", err)
+		t.Fatal("no ack after draining persisted frame:", err)
 	}
-
-	// The record is acknowledged but not yet stored: shut down right now.
-	cancel()
 	select {
 	case err := <-served:
 		if err != nil {
@@ -172,7 +178,7 @@ func TestServeDrainsInFlightInserts(t *testing.T) {
 		t.Fatal("Serve did not return after context cancellation")
 	}
 	if got := sink.stored(); got != 1 {
-		t.Fatalf("stored %d records after drain, want 1: shutdown dropped an acknowledged record", got)
+		t.Fatalf("stored %d records after drain, want 1", got)
 	}
 }
 
@@ -207,6 +213,12 @@ func TestServerEndToEnd(t *testing.T) {
 	if got := send(buildFrame("c27c052", "PING")); got != "2:OK" {
 		t.Fatalf("PING ack = %q", got)
 	}
+	if got := send(buildFrame("c27c052", "[]")); got != "2:OK" {
+		t.Fatalf("empty batch ack = %q", got)
+	}
+	if got := send(buildFrame("c27c052", "{invalid")); got != "2:OK" {
+		t.Fatalf("invalid JSON ack = %q", got)
+	}
 
 	records := `[{"t":"request","timestamp":1752700000.5,"duration":1000},{"t":"query","timestamp":1752700000.6,"duration":50}]`
 	if got := send(buildFrame("c27c052", records)); got != "2:OK" {
@@ -238,5 +250,27 @@ func TestServerEndToEnd(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if batches, _ := sink.snapshot(); len(batches) != 2 {
 		t.Fatal("record with bad token was stored")
+	}
+}
+
+func TestServerDoesNotACKFailedInsert(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New("127.0.0.1:0", mapResolver{"c27c052": "shop"}, 2*time.Second, failingSink{}, log)
+	if err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(t.Context())
+
+	conn, err := net.Dial("tcp", srv.ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(buildFrame("c27c052", `[{"t":"request"}]`))); err != nil {
+		t.Fatal(err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(conn, make([]byte, 4)); err == nil {
+		t.Fatal("failed insert was acknowledged")
 	}
 }
